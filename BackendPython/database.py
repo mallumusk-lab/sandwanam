@@ -1,12 +1,8 @@
 import asyncpg
-import asyncio
 from typing import Optional
 from config import DATABASE_URI, DB_USER, DB_PASS, DB_HOST, DB_PORT
 
 pool: Optional[asyncpg.Pool] = None
-
-# Detect if we are using Supabase/pgbouncer pooler
-IS_SUPABASE = any(kw in DATABASE_URI for kw in ("supabase", "pooler", ":6543"))
 
 async def init_db():
     global pool
@@ -28,16 +24,9 @@ async def init_db():
 
     try:
         # Create pool for 'myfin' / Supabase (statement_cache_size=0 is required for pgbouncer)
-        # max_inactive_connection_lifetime recycles idle connections before Supabase kills them (~300s)
-        if IS_SUPABASE:
-            pool = await asyncpg.create_pool(
-                DATABASE_URI,
-                min_size=0,
-                max_size=10,
-                statement_cache_size=0,
-                max_inactive_connection_lifetime=60.0,
-                command_timeout=30,
-            )
+        statement_cache = 0 if ("supabase" in DATABASE_URI or "pooler" in DATABASE_URI or ":6543" in DATABASE_URI) else None
+        if statement_cache is not None:
+            pool = await asyncpg.create_pool(DATABASE_URI, min_size=1, max_size=10, statement_cache_size=0)
         else:
             pool = await asyncpg.create_pool(DATABASE_URI, min_size=1, max_size=10)
         async with pool.acquire() as conn:
@@ -218,21 +207,5 @@ async def init_db():
         print(f"Error initializing DB schema: {e}")
 
 async def get_db():
-    """Acquire a DB connection with retry for dropped Supabase connections."""
-    last_err = None
-    for attempt in range(3):
-        try:
-            async with pool.acquire(timeout=10) as conn:
-                yield conn
-                return
-        except (
-            asyncpg.exceptions.ConnectionDoesNotExistError,
-            asyncpg.exceptions.TooManyConnectionsError,
-            asyncio.TimeoutError,
-            OSError,
-        ) as e:
-            last_err = e
-            if attempt < 2:
-                await asyncio.sleep(0.5 * (attempt + 1))
-            continue
-    raise Exception(f"Could not acquire DB connection after 3 attempts: {last_err}")
+    async with pool.acquire() as conn:
+        yield conn
