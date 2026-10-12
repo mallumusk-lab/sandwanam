@@ -1,0 +1,48 @@
+/* Home.css */
+
+.home-container {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    height: 100vh;
+  }
+  
+  .header {
+    background-color: #3498db;
+    padding: 1em;
+    width: 100%;
+    text-align: center;
+    color: #fff;
+  }
+  
+  .main-content {
+    width: 80%;
+    text-align: center;
+    margin-top: 2em;
+  }
+  
+  .summary-container {
+    margin-bottom: 2em;
+  }
+  
+  .moving-cards-container {
+    display: flex;
+    justify-content: space-around;
+  }
+  
+  .moving-card {
+    background-color: #ecf0f1;
+    padding: 1em;
+    border-radius: 8px;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+    width: 200px;
+    text-align: center;
+    margin: 0.5em;
+    transition: transform 0.3s ease-in-out;
+  }
+  
+  .moving-card:hover {
+    transform: scale(1.05);
+  }
+  

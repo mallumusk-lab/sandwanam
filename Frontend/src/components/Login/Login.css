@@ -1,0 +1,108 @@
+.login-page-wrapper {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  min-height: 100vh;
+  background: linear-gradient(135deg, #f8fafc 0%, #e2e8f0 100%);
+  padding: 24px;
+}
+
+.login-card {
+  width: 100%;
+  max-width: 420px;
+  padding: 48px 40px;
+  background: var(--bg-glass);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-xl);
+  border: 1px solid rgba(255, 255, 255, 0.4);
+}
+
+.login-header {
+  text-align: center;
+  margin-bottom: 32px;
+}
+
+.login-title {
+  font-family: var(--font-heading);
+  color: var(--text-heading);
+  font-size: 36px;
+  font-weight: 700;
+  margin-bottom: 8px;
+  letter-spacing: -0.5px;
+}
+
+.login-subtitle {
+  color: var(--text-muted);
+  font-size: 15px;
+  font-weight: 500;
+}
+
+.form-group {
+  margin-bottom: 24px;
+}
+
+.form-label {
+  display: block;
+  margin-bottom: 8px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-main);
+  letter-spacing: 0.2px;
+}
+
+.form-input {
+  width: 100%;
+  padding: 14px 18px;
+  background: white;
+  border: 2px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  font-size: 16px;
+  font-family: inherit;
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  outline: none;
+}
+
+.form-input:focus {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 4px var(--primary-light);
+  transform: translateY(-1px);
+}
+
+.login-error {
+  padding: 14px;
+  background-color: #fef2f2;
+  border: 1px solid #fee2e2;
+  border-radius: var(--radius-md);
+  color: var(--danger);
+  font-size: 14px;
+  font-weight: 500;
+  margin-bottom: 24px;
+  text-align: center;
+}
+
+.btn-login {
+  width: 100%;
+  background: var(--primary);
+  color: white;
+  padding: 16px;
+  border: none;
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  font-size: 16px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  box-shadow: 0 10px 15px -3px rgba(79, 70, 229, 0.2);
+}
+
+.btn-login:hover {
+  background: var(--primary-hover);
+  transform: translateY(-2px);
+  box-shadow: 0 20px 25px -5px rgba(79, 70, 229, 0.3);
+}
+
+.btn-login:active {
+  transform: translateY(0);
+}

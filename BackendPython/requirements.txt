@@ -1,0 +1,11 @@
+fastapi
+uvicorn
+pydantic
+asyncpg
+python-dotenv
+SQLAlchemy
+psycopg2-binary
+cors
+python-multipart
+beautifulsoup4
+httpx
