@@ -199,6 +199,36 @@ def verify_cron_secret(
         raise HTTPException(status_code=401, detail="Missing authorization header. Provide Bearer token or x-api-key.")
     raise HTTPException(status_code=401, detail="Invalid cron authorization.")
 
+@app.get("/")
+async def root():
+    return {
+        "status": "online",
+        "service": "Sandwanam Finance API",
+        "version": "1.0.0",
+        "docs": "/docs",
+        "health": "/health"
+    }
+
+@app.get("/health")
+async def health_check():
+    db_ok = False
+    error_msg = None
+    try:
+        if database.pool:
+            async with database.pool.acquire() as conn:
+                await conn.fetchval("SELECT 1")
+            db_ok = True
+        else:
+            error_msg = "Database pool not initialized"
+    except Exception as e:
+        error_msg = str(e)
+    return {
+        "status": "healthy" if db_ok else "unhealthy",
+        "database": "connected" if db_ok else "disconnected",
+        "error": error_msg,
+        "timestamp": datetime.now().isoformat()
+    }
+
 @app.get("/cron/compounding")
 async def cron_compounding(auth: str = Depends(verify_cron_secret)):
     """Called by Vercel Cron daily at midnight to run annual compounding."""
