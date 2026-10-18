@@ -27,85 +27,79 @@ ALLOWED_ORIGINS = os.getenv("ALLOWED_ORIGINS", "*").split(",")
 # SuperAdmin session store: maps session_token -> username (in-memory, cleared on restart)
 _superadmin_sessions: dict = {}
 
+# ─── Shared cron job logic (called both by background loops AND /cron/* HTTP endpoints) ───
+
+async def run_compounding_check():
+    """Core compounding logic — runs all open loans and compounds if >= 365 days have passed."""
+    compounded = []
+    async with database.pool.acquire() as conn:
+        open_loans = await conn.fetch("SELECT * FROM loan_data WHERE loantype = 'open'")
+        now = datetime.now()
+        for loan in open_loans:
+            loan_number = loan['loan_number']
+            latest_stmt = await conn.fetchrow(
+                "SELECT * FROM statement WHERE loan_number = $1 ORDER BY date DESC, statementid DESC LIMIT 1",
+                loan_number
+            )
+            if not latest_stmt:
+                continue
+            last_comp_stmt = await conn.fetchrow(
+                "SELECT date FROM statement WHERE loan_number = $1 AND transactionType = 'compounding' ORDER BY date DESC LIMIT 1",
+                loan_number
+            )
+            base_date = last_comp_stmt['date'] if last_comp_stmt else loan['date']
+            if isinstance(base_date, str):
+                base_date = datetime.fromisoformat(base_date.replace('Z', '+00:00'))
+            days_since_base = (now - base_date.replace(tzinfo=None)).days
+            if days_since_base >= 365:
+                print(f"Compounding loan {loan_number} (Days since base: {days_since_base})")
+                status = calculate_loan_status(loan, latest_stmt)
+                interest_to_compound = status['current_interest']
+                new_principal = status['current_principal'] + interest_to_compound
+                async with conn.transaction():
+                    await conn.execute("""
+                        INSERT INTO statement (loanId, loan_number, amountPaid, date, currentPrincipal, currentInterest, principleBalance, interestBalance, transactionType)
+                        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+                    """, loan['loanid'], loan_number, Decimal("0.00"), now, interest_to_compound, Decimal("0.00"), new_principal, Decimal("0.00"), 'compounding')
+                    await conn.execute("""
+                        UPDATE loan_data SET refreshprincipleamount = $1, refreshinterest = $2 WHERE loan_number = $3
+                    """, new_principal, Decimal("0.00"), loan_number)
+                    await log_audit_action(conn, "System", "COMPOUNDING", "LOAN", loan_number, f"Compounded annual interest: {interest_to_compound}")
+                compounded.append(loan_number)
+    return compounded
+
 async def run_compounding_cron():
-    """Background task to compound principal annually."""
+    """Background loop: runs compounding check once a day at midnight (non-Vercel servers only)."""
     while True:
         try:
-            print("Running annual compounding check...")
-            async with database.pool.acquire() as conn:
-                # Fetch all open loans
-                open_loans = await conn.fetch("SELECT * FROM loan_data WHERE loantype = 'open'")
-                now = datetime.now()
-                
-                for loan in open_loans:
-                    loan_number = loan['loan_number']
-                    # Get the most recent statement (to check for compounding or start date)
-                    latest_stmt = await conn.fetchrow("SELECT * FROM statement WHERE loan_number = $1 ORDER BY date DESC, statementid DESC LIMIT 1", loan_number)
-                    
-                    if not latest_stmt:
-                        continue
-                        
-                    # Calculate days since last activity or start date
-                    # We should check if it's been 365 days since the *original* date or last compounding.
-                    # For simplicity, if (now - loan['date']).days is a multiple of 365 and we haven't compounded today...
-                    # Actually, better: if days_diff >= 365.
-                    
-                    # Let's find the last compounding date
-                    last_comp_stmt = await conn.fetchrow("SELECT date FROM statement WHERE loan_number = $1 AND transactionType = 'compounding' ORDER BY date DESC LIMIT 1", loan_number)
-                    base_date = last_comp_stmt['date'] if last_comp_stmt else loan['date']
-                    
-                    if isinstance(base_date, str):
-                         base_date = datetime.fromisoformat(base_date.replace('Z', '+00:00'))
-                    
-                    days_since_base = (now - base_date.replace(tzinfo=None)).days
-                    
-                    if days_since_base >= 365:
-                        print(f"Compounding loan {loan_number} (Days since base: {days_since_base})")
-                        # Perform compounding
-                        status = calculate_loan_status(loan, latest_stmt)
-                        interest_to_compound = status['current_interest']
-                        new_principal = status['current_principal'] + interest_to_compound
-                        
-                        async with conn.transaction():
-                            # Insert compounding statement
-                            await conn.execute("""
-                                INSERT INTO statement (loanId, loan_number, amountPaid, date, currentPrincipal, currentInterest, principleBalance, interestBalance, transactionType)
-                                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-                            """, loan['loanid'], loan_number, Decimal("0.00"), now, interest_to_compound, Decimal("0.00"), new_principal, Decimal("0.00"), 'compounding')
-                            
-                            # Update loan_data
-                            await conn.execute("""
-                                UPDATE loan_data SET refreshprincipleamount = $1, refreshinterest = $2 WHERE loan_number = $3
-                            """, new_principal, Decimal("0.00"), loan_number)
-                            
-                            await log_audit_action(conn, "System", "COMPOUNDING", "LOAN", loan_number, f"Compounded annual interest: {interest_to_compound}")
-            
+            await run_compounding_check()
         except Exception as e:
             print(f"Error in compounding cron: {e}")
-            
-        # Run once a day at 12:00 AM. For now, check every hour.
-        # To run precisely at 12:00 AM:
         now = datetime.now()
         next_run = (now + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
         sleep_seconds = (next_run - now).total_seconds()
-        print(f"Compounding cron sleeping for {sleep_seconds} seconds until {next_run}")
+        print(f"Compounding cron sleeping for {sleep_seconds:.0f}s until {next_run}")
         await asyncio.sleep(sleep_seconds)
 
+async def run_backup_job():
+    """Core backup logic — dumps all tables to Backups/finance_backup.json."""
+    from services import create_json_backup
+    os.makedirs("Backups", exist_ok=True)
+    async with database.pool.acquire() as conn:
+        backup_json = await create_json_backup(conn)
+        with open("Backups/finance_backup.json", "w") as f:
+            f.write(backup_json)
+    return "Backups/finance_backup.json"
+
 async def run_auto_backup_cron():
-    """Background task to generate JSON backup every hour."""
+    """Background loop: runs backup immediately then every hour (non-Vercel servers only)."""
     while True:
         try:
-            # Run backup immediately on first iteration, then every hour
-            from services import create_json_backup
-            print("Running auto-backup...")
-            os.makedirs("Backups", exist_ok=True)
-            async with database.pool.acquire() as conn:
-                backup_json = await create_json_backup(conn)
-                with open("Backups/finance_backup.json", "w") as f:
-                    f.write(backup_json)
+            await run_backup_job()
+            print("Auto-backup complete.")
         except Exception as e:
             print(f"Auto-backup Error: {e}")
-        await asyncio.sleep(3600)  # Sleep AFTER backup, not before
+        await asyncio.sleep(3600)  # Sleep AFTER backup
 
 LIVE_GOLD_DATA = {"current": Decimal("6250.00"), "change": "Market Live"}
 
@@ -141,12 +135,25 @@ async def run_gold_price_cron():
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Replaces deprecated @app.on_event('startup'/'shutdown')."""
+    """Startup/shutdown lifecycle handler.
+    
+    Vercel is a serverless platform — each request may spin up a fresh process,
+    so long-running asyncio background tasks (crons) are skipped on Vercel.
+    They will still run correctly on a persistent server (Railway, Render, VPS, etc).
+    """
     await init_db()
-    asyncio.create_task(run_compounding_cron())
-    asyncio.create_task(run_auto_backup_cron())
-    asyncio.create_task(run_gold_price_cron())
+
+    # Only start background tasks when running on a persistent server, not Vercel
+    is_vercel = os.getenv("VERCEL") or os.getenv("VERCEL_ENV")
+    if not is_vercel:
+        asyncio.create_task(run_compounding_cron())
+        asyncio.create_task(run_auto_backup_cron())
+        asyncio.create_task(run_gold_price_cron())
+    else:
+        print("Vercel detected: skipping background cron tasks (use external cron service for compounding/backup).")
+
     yield  # App runs here
+
     # Shutdown: close the connection pool gracefully
     if database.pool:
         await database.pool.close()
@@ -165,6 +172,84 @@ def verify_api_key(x_api_key: str = Header(...)):
     if x_api_key != API_KEY:
         raise HTTPException(status_code=401, detail="Unauthorized. Invalid API key.")
     return x_api_key
+
+# \u2500\u2500\u2500 Cron HTTP Endpoints (for Vercel Cron Jobs & external schedulers) \u2500\u2500\u2500
+# Protected by CRON_SECRET env var. Configure in Vercel Dashboard.
+# Vercel sends: Authorization: Bearer <CRON_SECRET>
+
+def verify_cron_secret(authorization: str = Header(...)):
+    """Guard for /cron/* endpoints. Vercel Cron sends Authorization: Bearer <CRON_SECRET>."""
+    cron_secret = os.getenv("CRON_SECRET", "")
+    if not cron_secret:
+        raise HTTPException(status_code=503, detail="CRON_SECRET not configured on server.")
+    expected = f"Bearer {cron_secret}"
+    if not secrets.compare_digest(authorization, expected):
+        raise HTTPException(status_code=401, detail="Invalid cron secret.")
+
+@app.get("/cron/compounding")
+async def cron_compounding(auth: str = Depends(verify_cron_secret)):
+    """Called by Vercel Cron daily at midnight to run annual compounding."""
+    try:
+        compounded = await run_compounding_check()
+        return {"message": "Compounding check complete", "compounded_loans": compounded, "count": len(compounded)}
+    except Exception as e:
+        print(f"Cron compounding error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/cron/backup")
+async def cron_backup(auth: str = Depends(verify_cron_secret)):
+    """Called by Vercel Cron hourly to create a JSON backup."""
+    try:
+        path = await run_backup_job()
+        return {"message": "Backup complete", "path": path}
+    except Exception as e:
+        print(f"Cron backup error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/cron/gold-price")
+async def cron_gold_price(auth: str = Depends(verify_cron_secret)):
+    """Called by Vercel Cron hourly to refresh the live gold price."""
+    try:
+        await fetch_gold_price()
+        return {"message": "Gold price updated", "current": str(LIVE_GOLD_DATA["current"]), "change": LIVE_GOLD_DATA["change"]}
+    except Exception as e:
+        print(f"Cron gold price error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/cron/all")
+async def cron_all(auth: str = Depends(verify_cron_secret)):
+    """Combined cron endpoint — runs ALL tasks in one call.
+    
+    Use this with your single free Vercel cron slot (runs hourly).
+    - Compounding: checks all loans, only acts if >= 365 days have passed (safe to run hourly)
+    - Backup: saves a fresh snapshot every hour
+    - Gold price: refreshes the live market price every hour
+    """
+    results = {}
+
+    # 1. Compounding (idempotent — only fires if 365 days truly elapsed)
+    try:
+        compounded = await run_compounding_check()
+        results["compounding"] = {"status": "ok", "compounded_loans": compounded, "count": len(compounded)}
+    except Exception as e:
+        results["compounding"] = {"status": "error", "detail": str(e)}
+
+    # 2. Backup
+    try:
+        path = await run_backup_job()
+        results["backup"] = {"status": "ok", "path": path}
+    except Exception as e:
+        results["backup"] = {"status": "error", "detail": str(e)}
+
+    # 3. Gold price
+    try:
+        await fetch_gold_price()
+        results["gold_price"] = {"status": "ok", "current": str(LIVE_GOLD_DATA["current"]), "change": LIVE_GOLD_DATA["change"]}
+    except Exception as e:
+        results["gold_price"] = {"status": "error", "detail": str(e)}
+
+    return {"message": "All cron tasks executed", "results": results}
+
 
 @app.post("/authenticate")
 async def authenticate(auth: AuthRequest, conn: asyncpg.Connection = Depends(get_db), api_key=Depends(verify_api_key)):
