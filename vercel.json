@@ -1,0 +1,56 @@
+{
+  "version": 2,
+  "builds": [
+    {
+      "src": "BackendPython/main.py",
+      "use": "@vercel/python"
+    },
+    {
+      "src": "Frontend/package.json",
+      "use": "@vercel/static-build",
+      "config": {
+        "distDir": "dist"
+      }
+    }
+  ],
+  "routes": [
+    {
+      "src": "/api/(.*)",
+      "dest": "BackendPython/main.py"
+    },
+    {
+      "src": "/cron/(.*)",
+      "dest": "BackendPython/main.py"
+    },
+    {
+      "src": "/health",
+      "dest": "BackendPython/main.py"
+    },
+    {
+      "src": "/docs",
+      "dest": "BackendPython/main.py"
+    },
+    {
+      "src": "/openapi.json",
+      "dest": "BackendPython/main.py"
+    },
+    {
+      "src": "/assets/(.*)",
+      "dest": "Frontend/dist/assets/$1"
+    },
+    {
+      "src": "/(.*\\.(?:js|css|ico|png|jpg|jpeg|svg|json|woff2?|ttf|eot))",
+      "dest": "Frontend/dist/$1"
+    },
+    {
+      "src": "/(.*)",
+      "dest": "Frontend/dist/index.html"
+    }
+  ],
+  "crons": [
+    {
+      "path": "/cron/all",
+      "schedule": "0 0 * * *"
+    }
+  ]
+}
