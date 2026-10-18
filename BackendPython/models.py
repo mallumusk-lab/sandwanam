@@ -51,7 +51,7 @@ class EditLoanRequest(BaseModel):
     role: str
 
 class CollectionRequest(BaseModel):
-    amountPaid: float
+    amountPaid: Decimal
     date: Optional[str] = None
     transactionType: str
     role: str

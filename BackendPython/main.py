@@ -1,3 +1,4 @@
+from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
 from fastapi import FastAPI, Depends, HTTPException, Request, Header, UploadFile, File, BackgroundTasks
 from fastapi.responses import FileResponse
@@ -7,28 +8,24 @@ from fastapi.middleware.cors import CORSMiddleware
 from database import init_db, get_db
 import database
 import asyncpg
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 from models import AuthRequest, CustomerCreate, LoanDataCreate, StatementCreate, EditLoanRequest, CollectionRequest, HistoryImportRequest, BranchCreate, BranchUpdate, ResetPasswordRequest
 from pydantic import BaseModel
 from config import API_KEY
 from decimal import Decimal
 from security import verify_password
 import asyncio
+import secrets
 from services import round_decimal, calculate_loan_status, process_collection, log_audit_action, check_and_apply_historical_compounding
 import httpx
 from bs4 import BeautifulSoup
 import re
 
+# Allowed CORS origins — add your frontend URL here for production
+ALLOWED_ORIGINS = os.getenv("ALLOWED_ORIGINS", "*").split(",")
 
-app = FastAPI()
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"], # Simplified for dev, adjust in prod
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+# SuperAdmin session store: maps session_token -> username (in-memory, cleared on restart)
+_superadmin_sessions: dict = {}
 
 async def run_compounding_cron():
     """Background task to compound principal annually."""
@@ -98,8 +95,8 @@ async def run_auto_backup_cron():
     """Background task to generate JSON backup every hour."""
     while True:
         try:
+            # Run backup immediately on first iteration, then every hour
             from services import create_json_backup
-            await asyncio.sleep(3600)  # Wait 1 hour
             print("Running auto-backup...")
             os.makedirs("Backups", exist_ok=True)
             async with database.pool.acquire() as conn:
@@ -108,9 +105,9 @@ async def run_auto_backup_cron():
                     f.write(backup_json)
         except Exception as e:
             print(f"Auto-backup Error: {e}")
-            await asyncio.sleep(60)
+        await asyncio.sleep(3600)  # Sleep AFTER backup, not before
 
-LIVE_GOLD_DATA = {"current": Decimal("15000.00"), "change": "Market Live"}
+LIVE_GOLD_DATA = {"current": Decimal("6250.00"), "change": "Market Live"}
 
 async def fetch_gold_price():
     global LIVE_GOLD_DATA
@@ -121,10 +118,6 @@ async def fetch_gold_price():
             if response.status_code == 200:
                 soup = BeautifulSoup(response.text, 'html.parser')
                 text = soup.get_text()
-                
-                # Try to find "Gold price on [today] was X rupees per 10 grams" or similar month stats
-                # This site seems to have "highest ... was X" and "lowest ... was Y"
-                # We'll take an average or the most recent mention.
                 match = re.search(r"highest gold price.*?month.*?was ([\d,]+) rupees per 10 grams", text)
                 if match:
                     val = Decimal(match.group(1).replace(",", ""))
@@ -132,6 +125,10 @@ async def fetch_gold_price():
                     LIVE_GOLD_DATA["current"] = price_1g
                     LIVE_GOLD_DATA["change"] = "Live (24K)"
                     print(f"Updated live gold price: ₹{price_1g}/g")
+                else:
+                    print("Gold price scrape: pattern not matched, keeping previous price.")
+            else:
+                print(f"Gold price fetch: HTTP {response.status_code}")
     except Exception as e:
         print(f"Error fetching live gold price: {e}")
 
@@ -142,13 +139,27 @@ async def run_gold_price_cron():
         await asyncio.sleep(3600)
 
 
-@app.on_event("startup")
-async def startup_event():
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Replaces deprecated @app.on_event('startup'/'shutdown')."""
     await init_db()
     asyncio.create_task(run_compounding_cron())
     asyncio.create_task(run_auto_backup_cron())
     asyncio.create_task(run_gold_price_cron())
+    yield  # App runs here
+    # Shutdown: close the connection pool gracefully
+    if database.pool:
+        await database.pool.close()
 
+app = FastAPI(lifespan=lifespan)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=ALLOWED_ORIGINS,  # Set ALLOWED_ORIGINS env var in production (e.g. "https://yourapp.com")
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 def verify_api_key(x_api_key: str = Header(...)):
     if x_api_key != API_KEY:
@@ -284,32 +295,35 @@ async def create_loan_data(l: LoanDataCreate, conn: asyncpg.Connection = Depends
     check = await conn.fetchval("SELECT 1 FROM customers WHERE customerId = $1", l.customerId)
     if not check:
         raise HTTPException(status_code=400, detail="Invalid customerId. Customer does not exist.")
-    
+
+    # Pre-check duplicate loan number before starting a transaction
+    existing = await conn.fetchval("SELECT 1 FROM loan_data WHERE loan_number = $1", l.loan_number)
+    if existing:
+        raise HTTPException(status_code=400, detail=f"Loan number {l.loan_number} already exists.")
+
     try:
         async with conn.transaction():
-            existing = await conn.fetchval("SELECT 1 FROM loan_data WHERE loan_number = $1", l.loan_number)
-            if existing:
-                raise HTTPException(status_code=400, detail=f"Loan number {l.loan_number} already exists.")
-            
             row = await conn.fetchrow("""
-                INSERT INTO loan_data (customerId, particulars, particulars_qty, number_of_items, weight, 
-                net_weight, principle_amount, interest, tenure, loan_number, loanStatus, role, date, 
+                INSERT INTO loan_data (customerId, particulars, particulars_qty, number_of_items, weight,
+                net_weight, principle_amount, interest, tenure, loan_number, loanStatus, role, date,
                 loanType, refreshprincipleamount, refreshinterest, deduction)
                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17) RETURNING *
-            """, l.customerId, l.particulars, l.particulars_qty, l.number_of_items, l.weight, l.net_weight, 
-               l.principle_amount, l.interest, l.tenure, l.loan_number, l.loanStatus, l.role, l.date, 
+            """, l.customerId, l.particulars, l.particulars_qty, l.number_of_items, l.weight, l.net_weight,
+               l.principle_amount, l.interest, l.tenure, l.loan_number, l.loanStatus, l.role, l.date,
                l.loanType, l.refreshprincipleamount, l.refreshinterest, l.deduction)
-            
+
             await conn.execute("""
                 INSERT INTO statement (loanId, loan_number, amountPaid, date, currentPrincipal, currentInterest, principleBalance, interestBalance, transactionType)
                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
             """, row['loanid'], l.loan_number, Decimal("0.00"), l.date, Decimal("0.00"), Decimal("0.00"), l.principle_amount, Decimal("0.00"), 'newLoan')
-            
+
             await conn.execute("UPDATE customers SET loanStatus = '1' WHERE customerId = $1", l.customerId)
-            
+
             await log_audit_action(conn, l.role, "CREATE_LOAN", "LOAN", l.loan_number, f"Created loan for customerId: {l.customerId}, Amount: {l.principle_amount}")
-            
+
             return {"message": "Successfully created loan", "loan": dict(row)}
+    except HTTPException:
+        raise
     except Exception as e:
         print(f"Error in create_loan_data: {e}")
         raise HTTPException(status_code=500, detail="Internal Server Error")
@@ -354,13 +368,15 @@ async def get_loan_data_by_customer(customer_id: int, conn: asyncpg.Connection =
 async def add_collection(loan_number: str, request: CollectionRequest, conn: asyncpg.Connection = Depends(get_db), api_key=Depends(verify_api_key)):
     try:
         async with conn.transaction():
-            paid = Decimal(str(request.amountPaid))
+            paid = Decimal(str(request.amountPaid))  # already Decimal from model, str() is safe
             payment_date = datetime.fromisoformat(request.date.replace('Z', '+00:00')) if request.date else None
             stmt = await process_collection(conn, loan_number, paid, request.transactionType, payment_date, is_closing=request.is_closing)
-            
+
             await log_audit_action(conn, request.role, "ADD_COLLECTION", "LOAN", loan_number, f"Type: {request.transactionType}, Amount: {paid}, Closing: {request.is_closing}")
-            
+
             return {"message": "Collection added successfully", "statement": stmt}
+    except HTTPException:
+        raise
     except Exception as e:
         print(f"Error in add_collection: {e}")
         raise HTTPException(status_code=500, detail="Internal Server Error")
@@ -376,7 +392,7 @@ async def import_history(request: HistoryImportRequest, conn: asyncpg.Connection
                 # Check uniqueness (phone)
                 existing_c = await conn.fetchrow("SELECT customerid FROM customers WHERE phone = $1", c['phone'])
                 if existing_c:
-                     customer_id = existing_c['customerid']
+                    customer_id = existing_c['customerid']
                 else:
                     customer_row = await conn.fetchrow("""
                         INSERT INTO customers (customerName, phone, address, loanStatus, role, user_id)
@@ -391,7 +407,7 @@ async def import_history(request: HistoryImportRequest, conn: asyncpg.Connection
                 # Auto-generate a loan number based on customer ID
                 c_row = await conn.fetchrow("SELECT user_id FROM customers WHERE customerid = $1", customer_id)
                 prefix = c_row['user_id'].replace("FIN", "").replace("-", "") if c_row and c_row['user_id'] else "HIS"
-                
+
                 existing_loans = await conn.fetch("SELECT loan_number FROM loan_data WHERE customerid = $1", customer_id)
                 max_idx = 0
                 for el in existing_loans:
@@ -400,11 +416,12 @@ async def import_history(request: HistoryImportRequest, conn: asyncpg.Connection
                         try:
                             idx = int(ln.split('L')[-1])
                             if idx > max_idx: max_idx = idx
-                        except: pass
+                        except Exception:
+                            pass
                 loan_number = f"{prefix}L{max_idx + 1}"
 
-            # Check unique loan number
-            existing_l = await conn.fetchrow("SELECT loanid FROM loan_data WHERE loan_number = $1", loan_number)
+            # Check unique loan number — raise 400 here so it propagates correctly
+            existing_l = await conn.fetchval("SELECT loanid FROM loan_data WHERE loan_number = $1", loan_number)
             if existing_l:
                 raise HTTPException(status_code=400, detail=f"Loan number {loan_number} already exists.")
 
@@ -412,12 +429,12 @@ async def import_history(request: HistoryImportRequest, conn: asyncpg.Connection
             loan_date = datetime.fromisoformat(l['date'].replace('Z', '+00:00')) if isinstance(l['date'], str) else l['date']
 
             loan_row = await conn.fetchrow("""
-                INSERT INTO loan_data (customerId, particulars, particulars_qty, number_of_items, weight, 
-                net_weight, principle_amount, interest, tenure, loan_number, loanStatus, role, date, 
+                INSERT INTO loan_data (customerId, particulars, particulars_qty, number_of_items, weight,
+                net_weight, principle_amount, interest, tenure, loan_number, loanStatus, role, date,
                 loanType, refreshprincipleamount, refreshinterest, deduction)
                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17) RETURNING *
-            """, customer_id, l['particulars'], l.get('particulars_qty'), l['number_of_items'], Decimal(str(l['weight'])), Decimal(str(l['net_weight'])), 
-               Decimal(str(l['principle_amount'])), Decimal(str(l['interest'])), int(l['tenure']), loan_number, '1', request.role, loan_date, 
+            """, customer_id, l['particulars'], l.get('particulars_qty'), l['number_of_items'], Decimal(str(l['weight'])), Decimal(str(l['net_weight'])),
+               Decimal(str(l['principle_amount'])), Decimal(str(l['interest'])), int(l['tenure']), loan_number, '1', request.role, loan_date,
                'open', Decimal(str(l['principle_amount'])), Decimal("0.00"), Decimal(str(l['deduction'])))
 
             # 3. Create 'newLoan' Statement
@@ -429,85 +446,88 @@ async def import_history(request: HistoryImportRequest, conn: asyncpg.Connection
             # 4. Process Collections Sequentially
             sorted_collections = sorted(request.collections, key=lambda x: x.date)
             for coll in sorted_collections:
-                # process_collection internal logic
                 await process_collection(conn, loan_number, coll.amount, coll.type, coll.date)
 
             await log_audit_action(conn, request.role, "IMPORT_HISTORY", "LOAN", loan_number, f"Imported loan with {len(sorted_collections)} historical entries.")
-            
+
             return {"message": "History imported successfully", "loan_number": loan_number}
+    except HTTPException:
+        raise
     except Exception as e:
         print(f"Error in import_history: {e}")
         raise HTTPException(status_code=500, detail="Internal Server Error")
 
 @app.post("/preview_import")
 async def preview_import(request: HistoryImportRequest, conn: asyncpg.Connection = Depends(get_db), api_key=Depends(verify_api_key)):
+    tx = conn.transaction()
+    await tx.start()
     try:
-        tx = conn.transaction()
-        await tx.start()
-        try:
-            # 1. Handle Customer
-            customer_id = request.selectedCustomerId
-            if request.customerType == "new":
-                c = request.customerData
-                # Check uniqueness (phone)
-                existing_c = await conn.fetchrow("SELECT customerid FROM customers WHERE phone = $1", c['phone'])
-                if existing_c:
-                     customer_id = existing_c['customerid']
-                else:
-                    customer_row = await conn.fetchrow("""
-                        INSERT INTO customers (customerName, phone, address, loanStatus, role, user_id)
-                        VALUES ($1, $2, $3, $4, $5, $6) RETURNING customerid
-                    """, c['customerName'], c['phone'], c['address'], '1', request.role, c.get('user_id', 'admin'))
-                    customer_id = customer_row['customerid']
-            elif not customer_id:
-                # Fallback for empty preview customer
-                customer_id = 999999
+        # 1. Handle Customer
+        customer_id = request.selectedCustomerId
+        if request.customerType == "new":
+            c = request.customerData
+            existing_c = await conn.fetchrow("SELECT customerid FROM customers WHERE phone = $1", c['phone'])
+            if existing_c:
+                customer_id = existing_c['customerid']
+            else:
+                customer_row = await conn.fetchrow("""
+                    INSERT INTO customers (customerName, phone, address, loanStatus, role, user_id)
+                    VALUES ($1, $2, $3, $4, $5, $6) RETURNING customerid
+                """, c['customerName'], c['phone'], c['address'], '1', request.role, c.get('user_id', 'admin'))
+                customer_id = customer_row['customerid']
+        elif not customer_id:
+            customer_id = 999999
 
-            # 2. Create Loan
-            l = request.loanData
-            loan_number = l.get('loan_number') or "PREVIEW_LOAN_001"
+        # 2. Create Loan
+        l = request.loanData
+        loan_number = l.get('loan_number') or "PREVIEW_LOAN_001"
+        loan_date = datetime.fromisoformat(l['date'].replace('Z', '+00:00')) if isinstance(l['date'], str) else l['date']
 
-            # Ensure date is parsed correctly
-            loan_date = datetime.fromisoformat(l['date'].replace('Z', '+00:00')) if isinstance(l['date'], str) else l['date']
+        loan_row = await conn.fetchrow("""
+            INSERT INTO loan_data (customerId, particulars, particulars_qty, number_of_items, weight,
+            net_weight, principle_amount, interest, tenure, loan_number, loanStatus, role, date,
+            loanType, refreshprincipleamount, refreshinterest, deduction)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17) RETURNING *
+        """, customer_id, l['particulars'], l.get('particulars_qty'), l['number_of_items'], Decimal(str(l['weight'])), Decimal(str(l['net_weight'])),
+           Decimal(str(l['principle_amount'])), Decimal(str(l['interest'])), int(l['tenure']), loan_number, '1', request.role, loan_date,
+           'open', Decimal(str(l['principle_amount'])), Decimal("0.00"), Decimal(str(l['deduction'])))
 
-            loan_row = await conn.fetchrow("""
-                INSERT INTO loan_data (customerId, particulars, particulars_qty, number_of_items, weight, 
-                net_weight, principle_amount, interest, tenure, loan_number, loanStatus, role, date, 
-                loanType, refreshprincipleamount, refreshinterest, deduction)
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17) RETURNING *
-            """, customer_id, l['particulars'], l.get('particulars_qty'), l['number_of_items'], Decimal(str(l['weight'])), Decimal(str(l['net_weight'])), 
-               Decimal(str(l['principle_amount'])), Decimal(str(l['interest'])), int(l['tenure']), loan_number, '1', request.role, loan_date, 
-               'open', Decimal(str(l['principle_amount'])), Decimal("0.00"), Decimal(str(l['deduction'])))
+        # 3. Create 'newLoan' Statement
+        await conn.execute("""
+            INSERT INTO statement (loanId, loan_number, amountPaid, date, currentPrincipal, currentInterest, principleBalance, interestBalance, transactionType)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+        """, loan_row['loanid'], loan_number, Decimal("0.00"), loan_date, Decimal("0.00"), Decimal("0.00"), Decimal(str(l['principle_amount'])), Decimal("0.00"), 'newLoan')
 
-            # 3. Create 'newLoan' Statement
-            await conn.execute("""
-                INSERT INTO statement (loanId, loan_number, amountPaid, date, currentPrincipal, currentInterest, principleBalance, interestBalance, transactionType)
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-            """, loan_row['loanid'], loan_number, Decimal("0.00"), loan_date, Decimal("0.00"), Decimal("0.00"), Decimal(str(l['principle_amount'])), Decimal("0.00"), 'newLoan')
+        # 4. Process Collections Sequentially
+        sorted_collections = sorted(request.collections, key=lambda x: x.date)
+        for coll in sorted_collections:
+            await process_collection(conn, loan_number, coll.amount, coll.type, coll.date)
 
-            # 4. Process Collections Sequentially
-            sorted_collections = sorted(request.collections, key=lambda x: x.date if not callable(getattr(x, 'date', None)) else x.date())
-            for coll in sorted_collections:
-                # process_collection internal logic
-                await process_collection(conn, loan_number, coll.amount, coll.type, coll.date)
+        # 5. Final automatic compounding up to today
+        latest_stmt = await conn.fetchrow("SELECT * FROM statement WHERE loan_number = $1 ORDER BY date DESC, statementid DESC LIMIT 1", loan_number)
+        await check_and_apply_historical_compounding(conn, loan_row, latest_stmt, datetime.now().date())
 
-            # 5. Final automatic compounding up to today
-            latest_stmt = await conn.fetchrow("SELECT * FROM statement WHERE loan_number = $1 ORDER BY date DESC, statementid DESC LIMIT 1", loan_number)
-            await check_and_apply_historical_compounding(conn, loan_row, latest_stmt, datetime.now().date())
-
-            rows = await conn.fetch("SELECT * FROM statement WHERE loan_number = $1 ORDER BY date DESC, statementid DESC", loan_number)
-            statements = [dict(r) for r in rows]
-            return statements
-        finally:
-            await tx.rollback()
-            
+        rows = await conn.fetch("SELECT * FROM statement WHERE loan_number = $1 ORDER BY date DESC, statementid DESC", loan_number)
+        statements = [dict(r) for r in rows]
+        return statements
+    except HTTPException:
+        await tx.rollback()
+        raise
     except Exception as e:
         print(f"Error in preview_import: {e}")
+        await tx.rollback()
         raise HTTPException(status_code=500, detail="Internal Server Error")
+    finally:
+        # Rollback is idempotent if already rolled back above; ensures cleanup on success path
+        try:
+            await tx.rollback()
+        except Exception:
+            pass
 
 @app.get("/statement")
-async def get_all_statements(conn: asyncpg.Connection = Depends(get_db), api_key=Depends(verify_api_key)):
-    rows = await conn.fetch("SELECT * FROM statement")
+async def get_all_statements(limit: int = 200, offset: int = 0, conn: asyncpg.Connection = Depends(get_db), api_key=Depends(verify_api_key)):
+    """Returns paginated statement records. Default limit=200."""
+    rows = await conn.fetch("SELECT * FROM statement ORDER BY statementid DESC LIMIT $1 OFFSET $2", limit, offset)
     return [dict(r) for r in rows]
 
 @app.get("/statement/{loan_number}")
@@ -531,14 +551,20 @@ async def refresh_loan(payload: dict, conn: asyncpg.Connection = Depends(get_db)
     row = await conn.fetchrow("""
         UPDATE loan_data SET refreshprincipleamount = $1, refreshinterest = $2 WHERE loan_number = $3 RETURNING *
     """, principal, interest, payload.get("loan_number"))
+    if not row:
+        raise HTTPException(status_code=404, detail="Loan not found")
     return {"message": "Successfully updated loan refresh", "loanData": dict(row)}
 
 @app.post("/update-particulars")
 async def update_particulars(payload: dict, conn: asyncpg.Connection = Depends(get_db), api_key=Depends(verify_api_key)):
-    res = await conn.execute("UPDATE loan_data SET particulars = $1 WHERE loan_number = $2", payload.get("new_particulars"), payload.get("loan_number"))
-    if res == "UPDATE 1":
-        return {"message": "Particulars updated successfully"}
-    raise HTTPException(status_code=404, detail="Loan not found or updated")
+    # Use RETURNING to safely check if a row was actually updated
+    row = await conn.fetchrow(
+        "UPDATE loan_data SET particulars = $1 WHERE loan_number = $2 RETURNING loan_number",
+        payload.get("new_particulars"), payload.get("loan_number")
+    )
+    if not row:
+        raise HTTPException(status_code=404, detail="Loan not found")
+    return {"message": "Particulars updated successfully"}
 
 @app.post("/edit_loan/{loan_number}")
 async def edit_loan(loan_number: str, req: EditLoanRequest, conn: asyncpg.Connection = Depends(get_db), api_key=Depends(verify_api_key)):
@@ -573,26 +599,43 @@ async def get_audit_logs(conn: asyncpg.Connection = Depends(get_db), api_key=Dep
 @app.get("/admin_summary")
 async def get_admin_summary(force_refresh: bool = False, conn: asyncpg.Connection = Depends(get_db), api_key=Depends(verify_api_key)):
     if force_refresh:
-        # Full re-calculation (slow, but accurate)
+        # Full re-calculation — fetch all open loans AND their latest statements in 2 queries (not N+1)
         loans = await conn.fetch("SELECT * FROM loan_data WHERE loantype = 'open'")
+        latest_stmts = await conn.fetch("""
+            SELECT DISTINCT ON (loan_number) *
+            FROM statement
+            WHERE loan_number = ANY($1::varchar[])
+            ORDER BY loan_number, date DESC, statementid DESC
+        """, [loan['loan_number'] for loan in loans])
+        stmt_map = {s['loan_number']: dict(s) for s in latest_stmts}
+
         total_principal = Decimal("0.00")
         total_interest = Decimal("0.00")
+        updates = []
         for loan in loans:
-            latest_stmt = await conn.fetchrow("SELECT * FROM statement WHERE loan_number = $1 ORDER BY date DESC, statementid DESC LIMIT 1", loan['loan_number'])
-            if not latest_stmt: continue
+            latest_stmt = stmt_map.get(loan['loan_number'])
+            if not latest_stmt:
+                continue
             status = calculate_loan_status(loan, latest_stmt)
             total_principal += status['current_principal']
             total_interest += status['current_interest']
-            await conn.execute("UPDATE loan_data SET refreshprincipleamount = $1, refreshinterest = $2 WHERE loan_number = $3", status['current_principal'], status['current_interest'], loan['loan_number'])
+            updates.append((status['current_principal'], status['current_interest'], loan['loan_number']))
+
+        # Batch update using executemany instead of one UPDATE per loan
+        if updates:
+            await conn.executemany(
+                "UPDATE loan_data SET refreshprincipleamount = $1, refreshinterest = $2 WHERE loan_number = $3",
+                updates
+            )
     else:
         # Fast aggregation using already synced columns
         res = await conn.fetchrow("""
-            SELECT SUM(refreshprincipleamount) as total_p, SUM(refreshinterest) as total_i 
+            SELECT SUM(refreshprincipleamount) as total_p, SUM(refreshinterest) as total_i
             FROM loan_data WHERE loantype = 'open'
         """)
         total_principal = res['total_p'] or Decimal("0.00")
         total_interest = res['total_i'] or Decimal("0.00")
-        
+
     return {"total_principal": total_principal, "total_interest": total_interest}
 
 
@@ -694,28 +737,36 @@ async def get_analytics_data(conn: asyncpg.Connection = Depends(get_db), api_key
             GROUP BY range
         """)
 
-        GOLD_PRICE = Decimal("6250.00")
+        # Use live gold price from the scraper cron (falls back to default if scrape failed)
+        GOLD_PRICE = LIVE_GOLD_DATA["current"]
         total_open_principal = kpis_row['total_portfolio'] or Decimal("0.00")
         total_weight = kpis_row['total_weight'] or Decimal("0.00")
         avg_ltv = (total_open_principal / (total_weight * GOLD_PRICE)) * 100 if total_weight > 0 else Decimal("0.00")
 
-        # Today's stats
-        disbursed_today = await conn.fetchval("SELECT SUM(principle_amount) FROM loan_data WHERE DATE(date) = $1", now_date) or Decimal("0.00")
-        collected_today = await conn.fetchval("SELECT SUM(amountPaid) FROM statement WHERE DATE(date) = $1 AND transactionType IN ('addColl', 'writeoff')", now_date) or Decimal("0.00")
-        disbursed_today_count = await conn.fetchval("SELECT COUNT(*) FROM loan_data WHERE DATE(date) = $1", now_date) or 0
-        collected_today_count = await conn.fetchval("SELECT COUNT(*) FROM statement WHERE DATE(date) = $1 AND transactionType IN ('addColl', 'writeoff')", now_date) or 0
-        interest_today = await conn.fetchval("SELECT SUM(amountPaid) FROM statement WHERE DATE(date) = $1 AND transactionType = 'addColl' AND currentInterest > 0", now_date) or Decimal("0.00")
-        closed_today = await conn.fetchval("SELECT COUNT(*) FROM loan_data WHERE loantype = 'closed' AND DATE(date) = $1", now_date) or 0
-        gold_collected_today = await conn.fetchval(
-            """SELECT SUM(t.net_weight) FROM (
-                SELECT DISTINCT ON (ld.loan_number) ld.net_weight 
-                FROM statement s
-                JOIN loan_data ld ON s.loan_number = ld.loan_number
-                WHERE ld.loantype = 'closed' AND DATE(s.date) = $1
-                AND s.transactiontype IN ('addColl','writeoff','closure')
-            ) t""",
-            now_date
-        ) or Decimal("0.00")
+        # Today's stats — batched into a single query to avoid 7 sequential round-trips
+        today_stats = await conn.fetchrow("""
+            SELECT
+                COALESCE((SELECT SUM(principle_amount) FROM loan_data WHERE DATE(date) = $1), 0) AS disbursed_today,
+                COALESCE((SELECT COUNT(*) FROM loan_data WHERE DATE(date) = $1), 0) AS disbursed_today_count,
+                COALESCE((SELECT SUM(amountPaid) FROM statement WHERE DATE(date) = $1 AND transactionType IN ('addColl', 'writeoff')), 0) AS collected_today,
+                COALESCE((SELECT COUNT(*) FROM statement WHERE DATE(date) = $1 AND transactionType IN ('addColl', 'writeoff')), 0) AS collected_today_count,
+                COALESCE((SELECT SUM(amountPaid) FROM statement WHERE DATE(date) = $1 AND transactionType = 'addColl' AND currentInterest > 0), 0) AS interest_today,
+                COALESCE((SELECT COUNT(*) FROM loan_data WHERE loantype = 'closed' AND DATE(date) = $1), 0) AS closed_today,
+                COALESCE((SELECT SUM(t.net_weight) FROM (
+                    SELECT DISTINCT ON (ld.loan_number) ld.net_weight
+                    FROM statement s
+                    JOIN loan_data ld ON s.loan_number = ld.loan_number
+                    WHERE ld.loantype = 'closed' AND DATE(s.date) = $1
+                    AND s.transactiontype IN ('addColl','writeoff','closure')
+                ) t), 0) AS gold_collected_today
+        """, now_date)
+        disbursed_today = today_stats['disbursed_today']
+        disbursed_today_count = today_stats['disbursed_today_count']
+        collected_today = today_stats['collected_today']
+        collected_today_count = today_stats['collected_today_count']
+        interest_today = today_stats['interest_today']
+        closed_today = today_stats['closed_today']
+        gold_collected_today = today_stats['gold_collected_today']
 
         # Recent Transactions
         recent_txs = await conn.fetch("""
@@ -789,7 +840,7 @@ async def get_analytics_data(conn: asyncpg.Connection = Depends(get_db), api_key
                 "risk_90": risk_agg['risk_90'] or Decimal("0.00"),
                 "risk_31_90": risk_agg['risk_31_90'] or Decimal("0.00"),
                 "risk_1_30": risk_agg['risk_1_30'] or Decimal("0.00"),
-                "total_collected": await conn.fetchval("SELECT SUM(amountPaid) FROM statement") or Decimal("0.00"),
+                "total_collected": await conn.fetchval("SELECT SUM(amountPaid) FROM statement WHERE transactionType IN ('addColl', 'writeoff')") or Decimal("0.00"),
                 "avg_ltv": round_decimal(avg_ltv),
                 "disbursed_today": disbursed_today,
                 "disbursed_today_count": disbursed_today_count,
@@ -802,7 +853,7 @@ async def get_analytics_data(conn: asyncpg.Connection = Depends(get_db), api_key
             "aging": [dict(r) for r in aging_counts],
             "trends": trends_data,
             "recent_transactions": [dict(r) for r in recent_txs],
-            "gold_price": {"current": GOLD_PRICE, "change": "+₹50 today"},
+            "gold_price": {"current": GOLD_PRICE, "change": LIVE_GOLD_DATA["change"]},
             "branch_data": real_branch_data
         }
     except Exception as e:
@@ -1384,8 +1435,8 @@ async def get_admin_details(detail_type: str, conn: asyncpg.Connection = Depends
 # ─────────────────────────────────────────────────────────
 
 def require_superadmin(x_superadmin_key: str = Header(...)):
-    """Simple header-based superadmin guard. Frontend sends x-superadmin-key after login."""
-    if x_superadmin_key != "superadmin-session-ok":
+    """Validates a cryptographically-random session token issued at SuperAdmin login."""
+    if x_superadmin_key not in _superadmin_sessions:
         raise HTTPException(status_code=403, detail="SuperAdmin access required.")
 
 @app.post("/superadmin/authenticate")
@@ -1394,7 +1445,10 @@ async def superadmin_authenticate(auth: AuthRequest, conn: asyncpg.Connection = 
     if row and row['role'] == 'SuperAdmin':
         is_valid = verify_password(auth.password, row['password'])
         if is_valid:
-            return {"message": "SuperAdmin authentication successful", "role": "SuperAdmin"}
+            # Issue a cryptographically-random session token
+            token = secrets.token_urlsafe(32)
+            _superadmin_sessions[token] = auth.userName
+            return {"message": "SuperAdmin authentication successful", "role": "SuperAdmin", "session_token": token}
     raise HTTPException(status_code=401, detail="Invalid SuperAdmin credentials.")
 
 @app.get("/superadmin/branches")
@@ -1424,14 +1478,25 @@ async def update_branch(username: str, update: BranchUpdate, conn: asyncpg.Conne
     row = await conn.fetchrow("SELECT 1 FROM role WHERE userName = $1", username)
     if not row:
         raise HTTPException(status_code=404, detail=f"Branch '{username}' not found.")
+
+    # Build a single UPDATE query with only the fields provided — avoids 4 round-trips
+    fields = {}
     if update.display_name is not None:
-        await conn.execute("UPDATE role SET display_name = $1 WHERE userName = $2", update.display_name, username)
+        fields['display_name'] = update.display_name
     if update.logo is not None:
-        await conn.execute("UPDATE role SET logo = $1 WHERE userName = $2", update.logo, username)
+        fields['logo'] = update.logo
     if update.address is not None:
-        await conn.execute("UPDATE role SET address = $1 WHERE userName = $2", update.address, username)
+        fields['address'] = update.address
     if update.permissions is not None:
-        await conn.execute("UPDATE role SET permissions = $1 WHERE userName = $2", update.permissions, username)
+        fields['permissions'] = update.permissions
+
+    if fields:
+        set_clause = ", ".join(f"{col} = ${i+1}" for i, col in enumerate(fields))
+        values = list(fields.values()) + [username]
+        await conn.execute(
+            f"UPDATE role SET {set_clause} WHERE userName = ${len(values)}",
+            *values
+        )
     return {"message": f"Branch '{username}' updated successfully."}
 
 @app.post("/superadmin/reset_password/{username}")
@@ -1472,26 +1537,22 @@ class FollowUpRequest(BaseModel):
     loan_number: str
     follow_up_date: str
 
-@app.get("/overdue_loans")
-async def get_overdue_loans(conn: asyncpg.Connection = Depends(get_db), api_key=Depends(verify_api_key)):
-    query = """
-        SELECT ld.*, c.customername, c.phone 
-        FROM loan_data ld
-        JOIN customers c ON ld.customerid = c.customerid
-        WHERE ld.loantype = 'open'
-          AND (ld.date + (COALESCE(ld.tenure, 0) || ' months')::interval) < CURRENT_DATE
-          AND (ld.follow_up_date IS NULL OR ld.follow_up_date <= CURRENT_DATE)
-        ORDER BY ld.date DESC
-    """
-    rows = await conn.fetch(query)
-    return [dict(r) for r in rows]
+# NOTE: The duplicate /overdue_loans GET route that was here has been removed.
+# The canonical definition is at line ~610 above (with follow_up_date support).
 
 @app.post("/set_follow_up")
 async def set_follow_up(req: FollowUpRequest, conn: asyncpg.Connection = Depends(get_db), api_key=Depends(verify_api_key)):
     try:
         dt = datetime.strptime(req.follow_up_date, "%Y-%m-%d").date() if req.follow_up_date else None
-        await conn.execute("UPDATE loan_data SET follow_up_date = $1 WHERE loan_number = $2", dt, req.loan_number)
+        row = await conn.fetchrow(
+            "UPDATE loan_data SET follow_up_date = $1 WHERE loan_number = $2 RETURNING loan_number",
+            dt, req.loan_number
+        )
+        if not row:
+            raise HTTPException(status_code=404, detail="Loan not found")
         return {"message": "Follow-up date updated"}
+    except HTTPException:
+        raise
     except Exception as e:
         print(f"Error setting follow_up_date: {e}")
         raise HTTPException(status_code=500, detail="Internal Server Error")

@@ -99,6 +99,26 @@ async def init_db():
                 WHERE transactionType = 'newLoan';
             """)
 
+            # Performance indexes for frequently queried columns
+            await conn.execute("""
+                CREATE INDEX IF NOT EXISTS idx_statement_loan_number ON statement(loan_number);
+            """)
+            await conn.execute("""
+                CREATE INDEX IF NOT EXISTS idx_statement_date ON statement(date);
+            """)
+            await conn.execute("""
+                CREATE INDEX IF NOT EXISTS idx_statement_transaction_type ON statement(transactionType);
+            """)
+            await conn.execute("""
+                CREATE INDEX IF NOT EXISTS idx_loan_data_loantype ON loan_data(loantype);
+            """)
+            await conn.execute("""
+                CREATE INDEX IF NOT EXISTS idx_loan_data_customerid ON loan_data(customerid);
+            """)
+            await conn.execute("""
+                CREATE INDEX IF NOT EXISTS idx_loan_data_date ON loan_data(date);
+            """)
+
             # Trigger logic
             trigger_check = await conn.fetchval("""
                 SELECT 1 FROM pg_trigger
