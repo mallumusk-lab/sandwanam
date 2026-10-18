@@ -177,14 +177,27 @@ def verify_api_key(x_api_key: str = Header(...)):
 # Protected by CRON_SECRET env var. Configure in Vercel Dashboard.
 # Vercel sends: Authorization: Bearer <CRON_SECRET>
 
-def verify_cron_secret(authorization: str = Header(...)):
-    """Guard for /cron/* endpoints. Vercel Cron sends Authorization: Bearer <CRON_SECRET>."""
+def verify_cron_secret(
+    authorization: Optional[str] = Header(None),
+    x_api_key: Optional[str] = Header(None)
+):
+    """
+    Guard for /cron/* endpoints.
+    Accepts:
+    1. Authorization: Bearer <CRON_SECRET> (sent automatically by Vercel Cron)
+    2. x-api-key: <API_KEY> (for manual testing via Swagger/Postman/curl)
+    3. Authorization: Bearer <API_KEY>
+    """
     cron_secret = os.getenv("CRON_SECRET", "")
-    if not cron_secret:
-        raise HTTPException(status_code=503, detail="CRON_SECRET not configured on server.")
-    expected = f"Bearer {cron_secret}"
-    if not secrets.compare_digest(authorization, expected):
-        raise HTTPException(status_code=401, detail="Invalid cron secret.")
+    if cron_secret and authorization and secrets.compare_digest(authorization, f"Bearer {cron_secret}"):
+        return True
+    if x_api_key and secrets.compare_digest(x_api_key, API_KEY):
+        return True
+    if authorization and secrets.compare_digest(authorization, f"Bearer {API_KEY}"):
+        return True
+    if not cron_secret and not authorization and not x_api_key:
+        raise HTTPException(status_code=401, detail="Missing authorization header. Provide Bearer token or x-api-key.")
+    raise HTTPException(status_code=401, detail="Invalid cron authorization.")
 
 @app.get("/cron/compounding")
 async def cron_compounding(auth: str = Depends(verify_cron_secret)):
