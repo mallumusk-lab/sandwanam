@@ -168,6 +168,20 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+class StripApiPrefixMiddleware:
+    """ASGI middleware that strips '/api' prefix from incoming requests
+    so that frontend calls to '/api/customers' route cleanly to existing endpoints."""
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] in ("http", "websocket") and scope.get("path", "").startswith("/api"):
+            new_path = scope["path"][4:]
+            scope["path"] = new_path if new_path.startswith("/") else "/" + new_path
+        await self.app(scope, receive, send)
+
+app.add_middleware(StripApiPrefixMiddleware)
+
 def verify_api_key(x_api_key: str = Header(...)):
     if x_api_key != API_KEY:
         raise HTTPException(status_code=401, detail="Unauthorized. Invalid API key.")
