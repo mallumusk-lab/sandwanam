@@ -1,0 +1,1 @@
+"""Gold-loan management API."""

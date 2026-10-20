@@ -1,0 +1,27 @@
+{
+  "description": "Interest quotes for a loan with no payments, shared by the Python ledger tests and the frontend calculator tests. Rules: annual rate, interest = P × r × days ÷ 36500; customer-facing periods count (end − start) + 1 days; compounding falls on start + 365·k and its period counts exact days; closing within 7 days (inclusive) charges at least 7 days. Values were computed by hand.",
+  "cases": [
+    {"name": "same day charges one day", "principal": "50000.00", "rate": "24", "start": "2025-05-05", "as_of": "2025-05-05", "closing": false,
+     "expected": {"principal": "50000.00", "interest": "32.88", "period_days": 1, "compoundings": 0}},
+    {"name": "next day charges two days", "principal": "100000.00", "rate": "12", "start": "2025-01-01", "as_of": "2025-01-02", "closing": false,
+     "expected": {"principal": "100000.00", "interest": "65.75", "period_days": 2, "compoundings": 0}},
+    {"name": "ten days later charges eleven days", "principal": "10000.00", "rate": "10", "start": "2025-02-01", "as_of": "2025-02-11", "closing": false,
+     "expected": {"principal": "10000.00", "interest": "30.14", "period_days": 11, "compoundings": 0}},
+    {"name": "missing rate defaults to 18% p.a.", "principal": "10000.00", "rate": null, "start": "2025-01-01", "as_of": "2025-01-01", "closing": false,
+     "expected": {"principal": "10000.00", "interest": "4.93", "period_days": 1, "compoundings": 0}},
+    {"name": "day before the first anniversary", "principal": "100000.00", "rate": "12", "start": "2025-01-01", "as_of": "2025-12-31", "closing": false,
+     "expected": {"principal": "100000.00", "interest": "12000.00", "period_days": 365, "compoundings": 0}},
+    {"name": "first anniversary compounds 365 exact days then charges the day", "principal": "100000.00", "rate": "12", "start": "2025-01-01", "as_of": "2026-01-01", "closing": false,
+     "expected": {"principal": "112000.00", "interest": "36.82", "period_days": 1, "compoundings": 1}},
+    {"name": "second anniversary compounds again", "principal": "100000.00", "rate": "12", "start": "2025-01-01", "as_of": "2027-01-01", "closing": false,
+     "expected": {"principal": "125440.00", "interest": "41.24", "period_days": 1, "compoundings": 2}},
+    {"name": "leap year anniversary is start + 365 days", "principal": "36500.00", "rate": "10", "start": "2024-01-01", "as_of": "2024-12-31", "closing": false,
+     "expected": {"principal": "40150.00", "interest": "11.00", "period_days": 1, "compoundings": 1}},
+    {"name": "closing on day three charges the seven-day minimum", "principal": "100000.00", "rate": "12", "start": "2025-01-01", "as_of": "2025-01-03", "closing": true,
+     "expected": {"principal": "100000.00", "interest": "230.14", "period_days": 7, "compoundings": 0}},
+    {"name": "closing on day seven charges exactly seven days", "principal": "100000.00", "rate": "12", "start": "2025-01-01", "as_of": "2025-01-07", "closing": true,
+     "expected": {"principal": "100000.00", "interest": "230.14", "period_days": 7, "compoundings": 0}},
+    {"name": "closing on day eight has no minimum", "principal": "100000.00", "rate": "12", "start": "2025-01-01", "as_of": "2025-01-08", "closing": true,
+     "expected": {"principal": "100000.00", "interest": "263.01", "period_days": 8, "compoundings": 0}}
+  ]
+}

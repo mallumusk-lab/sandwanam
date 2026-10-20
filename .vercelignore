@@ -1,0 +1,12 @@
+# Not needed by the deployed site or API.
+.github
+test-vectors
+BackendPython/tests
+BackendPython/scripts
+BackendPython/migrations
+BackendPython/requirements-dev.txt
+Frontend/tests
+Frontend/scripts
+**/__pycache__
+**/.env
+**/.env.*
