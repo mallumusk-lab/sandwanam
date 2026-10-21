@@ -1,8 +1,5 @@
-fastapi
-uvicorn[standard]
-pydantic
-asyncpg
-python-dotenv
-python-multipart
-beautifulsoup4
-httpx
+# Runtime dependencies (installed by Vercel). Ranges allow security releases; run
+# `pip-audit -r requirements.txt` in CI and pin with a lock tool when network access allows.
+fastapi>=0.115,<1
+pydantic>=2.7,<3
+asyncpg>=0.30,<1

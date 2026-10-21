@@ -1,0 +1,165 @@
+/* Design tokens. Every colour pair used for text meets WCAG 2.2 AA (4.5:1) in both
+   themes; tests/contrast.test.js enforces this. Themes follow the operating system
+   unless the user picks one (data-theme on <html>). */
+
+:root {
+  --font-sans: system-ui, -apple-system, "Segoe UI", Roboto, "Noto Sans", "Nirmala UI", "Noto Sans Malayalam", sans-serif;
+  --font-mono: ui-monospace, "Cascadia Mono", "Segoe UI Mono", Consolas, monospace;
+
+  --text-xs: 0.75rem;
+  --text-sm: 0.875rem;
+  --text-base: 1rem;
+  --text-lg: 1.125rem;
+  --text-xl: clamp(1.25rem, 1.15rem + 0.45vw, 1.5rem);
+  --text-2xl: clamp(1.5rem, 1.3rem + 0.9vw, 2rem);
+  --leading-tight: 1.25;
+  --leading-normal: 1.55;
+
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-5: 1.5rem;
+  --space-6: 2rem;
+  --space-7: 2.5rem;
+  --space-8: 3rem;
+
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+  --radius-full: 999px;
+
+  --control-height: 2.75rem;
+  --sidebar-width: 15.5rem;
+  --content-max: 80rem;
+  --z-header: 20;
+  --z-drawer: 40;
+  --z-modal: 50;
+  --z-toast: 60;
+  --duration: 160ms;
+
+  color-scheme: light;
+  --color-bg: #f6f5f9;
+  --color-surface: #ffffff;
+  --color-surface-2: #f1eff6;
+  --color-border: #e1dde9;
+  --color-border-strong: #857d94;
+  --color-text: #1d1a24;
+  --color-text-muted: #595366;
+  --color-primary: #603f83;
+  --color-primary-hover: #4e3270;
+  --color-on-primary: #ffffff;
+  --color-primary-soft: #efe8f7;
+  --color-primary-text: #5a3b7c;
+  --color-success: #1d6b45;
+  --color-success-soft: #e3f3ea;
+  --color-warning: #7a4f00;
+  --color-warning-soft: #fcf1d7;
+  --color-danger: #b42318;
+  --color-danger-soft: #fdecea;
+  --color-info: #1c5592;
+  --color-info-soft: #e7eff9;
+  --color-focus: #6d28d9;
+  --color-overlay: rgb(20 16 28 / 0.55);
+  --color-chart-1: #603f83;
+  --color-chart-2: #c27c0e;
+  --shadow-sm: 0 1px 2px rgb(24 16 40 / 0.06);
+  --shadow-md: 0 4px 16px rgb(24 16 40 / 0.08);
+  --shadow-lg: 0 18px 48px rgb(24 16 40 / 0.18);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --color-bg: #121016;
+    --color-surface: #1b1820;
+    --color-surface-2: #25212c;
+    --color-border: #36313f;
+    --color-border-strong: #6f6880;
+    --color-text: #f2eff7;
+    --color-text-muted: #b5adc3;
+    --color-primary: #b99de2;
+    --color-primary-hover: #cbb5ec;
+    --color-on-primary: #1a1222;
+    --color-primary-soft: #2d2339;
+    --color-primary-text: #d4c2f0;
+    --color-success: #6fd3a0;
+    --color-success-soft: #16301f;
+    --color-warning: #f2c063;
+    --color-warning-soft: #35290f;
+    --color-danger: #f4978e;
+    --color-danger-soft: #3b1815;
+    --color-info: #8dbcf2;
+    --color-info-soft: #15263b;
+    --color-focus: #c9adff;
+    --color-overlay: rgb(0 0 0 / 0.65);
+    --color-chart-1: #9f80d1;
+    --color-chart-2: #c4852a;
+    --shadow-sm: 0 1px 2px rgb(0 0 0 / 0.4);
+    --shadow-md: 0 4px 16px rgb(0 0 0 / 0.45);
+    --shadow-lg: 0 18px 48px rgb(0 0 0 / 0.6);
+  }
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --color-bg: #121016;
+  --color-surface: #1b1820;
+  --color-surface-2: #25212c;
+  --color-border: #36313f;
+  --color-border-strong: #6f6880;
+  --color-text: #f2eff7;
+  --color-text-muted: #b5adc3;
+  --color-primary: #b99de2;
+  --color-primary-hover: #cbb5ec;
+  --color-on-primary: #1a1222;
+  --color-primary-soft: #2d2339;
+  --color-primary-text: #d4c2f0;
+  --color-success: #6fd3a0;
+  --color-success-soft: #16301f;
+  --color-warning: #f2c063;
+  --color-warning-soft: #35290f;
+  --color-danger: #f4978e;
+  --color-danger-soft: #3b1815;
+  --color-info: #8dbcf2;
+  --color-info-soft: #15263b;
+  --color-focus: #c9adff;
+  --color-overlay: rgb(0 0 0 / 0.65);
+  --color-chart-1: #9f80d1;
+  --color-chart-2: #c4852a;
+  --shadow-sm: 0 1px 2px rgb(0 0 0 / 0.4);
+  --shadow-md: 0 4px 16px rgb(0 0 0 / 0.45);
+  --shadow-lg: 0 18px 48px rgb(0 0 0 / 0.6);
+}
+
+/* Paper is always light, whatever theme the screen uses. */
+@media print {
+  :root, :root[data-theme="dark"], :root:not([data-theme="light"]) {
+    color-scheme: light;
+    --color-bg: #ffffff;
+    --color-surface: #ffffff;
+    --color-surface-2: #f1eff6;
+    --color-border: #d8d3e2;
+    --color-border-strong: #857d94;
+    --color-text: #000000;
+    --color-text-muted: #3d3846;
+    --color-primary: #603f83;
+    --color-primary-hover: #4e3270;
+    --color-on-primary: #ffffff;
+    --color-primary-soft: #efe8f7;
+    --color-primary-text: #3b2552;
+    --color-success: #1d6b45;
+    --color-success-soft: #e3f3ea;
+    --color-warning: #7a4f00;
+    --color-warning-soft: #fcf1d7;
+    --color-danger: #b42318;
+    --color-danger-soft: #fdecea;
+    --color-info: #1c5592;
+    --color-info-soft: #e7eff9;
+    --color-chart-1: #603f83;
+    --color-chart-2: #c27c0e;
+    --shadow-sm: none;
+    --shadow-md: none;
+    --shadow-lg: none;
+  }
+}

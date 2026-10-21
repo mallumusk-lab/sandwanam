@@ -1,0 +1,22 @@
+{
+  "description": "Anonymised ledger rows exported from the pre-2026-10 application (no customer names, phones or addresses). Used to prove legacy rows stay readable and are reported correctly.",
+  "loans": [
+    {"loan_number": "SAN1L1", "date": "2026-03-24T17:20:21.019000+00:00", "principle_amount": "10000.00", "interest": "12.00", "loantype": "closed", "net_weight": "70.00", "particulars": "Ring(1)"},
+    {"loan_number": "SAN1L2", "date": "2025-03-30T21:10:12+00:00", "principle_amount": "11111111.00", "interest": "12.00", "loantype": "closed", "net_weight": "9.00", "particulars": "Ring(1)"},
+    {"loan_number": "SAN1L3", "date": "2023-09-12T16:47:53+00:00", "principle_amount": "100000.00", "interest": "18.00", "loantype": "open", "net_weight": "100.00", "particulars": "Ring(1)"},
+    {"loan_number": "SAN1L4", "date": "2026-01-14T17:56:13+00:00", "principle_amount": "10000.00", "interest": "12.00", "loantype": "open", "net_weight": "70.00", "particulars": "Chain(1)"}
+  ],
+  "statements": [
+    {"statementid": 1, "loan_number": "SAN1L1", "transactiontype": "newLoan", "date": "2026-03-24T17:20:21.019000+00:00", "amountpaid": "0.00", "currentprincipal": "0.00", "currentinterest": "0.00", "principlebalance": "10000.00", "interestbalance": "0.00"},
+    {"statementid": 2, "loan_number": "SAN1L1", "transactiontype": "addColl", "date": "2026-03-24T17:32:30.417000+00:00", "amountpaid": "100.00", "currentprincipal": "-96.71", "currentinterest": "3.29", "principlebalance": "9903.29", "interestbalance": "0.00"},
+    {"statementid": 3, "loan_number": "SAN1L1", "transactiontype": "addColl", "date": "2026-03-24T17:36:24.423000+00:00", "amountpaid": "1222.00", "currentprincipal": "-1218.74", "currentinterest": "3.26", "principlebalance": "8684.55", "interestbalance": "0.00"},
+    {"statementid": 135, "loan_number": "SAN1L1", "transactiontype": "addColl", "date": "2026-04-18T17:42:19.758000+00:00", "amountpaid": "0.00", "currentprincipal": "0.00", "currentinterest": "0.00", "principlebalance": "8468.23", "interestbalance": "69.60"},
+    {"statementid": 136, "loan_number": "SAN1L1", "transactiontype": "writeoff", "date": "2026-04-18T17:42:20.450000+00:00", "amountpaid": "0.00", "currentprincipal": "0.00", "currentinterest": "0.00", "principlebalance": "8537.83", "interestbalance": "0.00"},
+    {"statementid": 91, "loan_number": "SAN1L2", "transactiontype": "newLoan", "date": "2025-03-30T21:10:12+00:00", "amountpaid": "0.00", "currentprincipal": "0.00", "currentinterest": "0.00", "principlebalance": "11111111.00", "interestbalance": "0.00"},
+    {"statementid": 95, "loan_number": "SAN1L2", "transactiontype": "disbursement", "date": "2025-05-22T21:10:12+00:00", "amountpaid": "0.00", "currentprincipal": "1000.00", "currentinterest": "0.00", "principlebalance": "301965.34", "interestbalance": "98.95"},
+    {"statementid": 97, "loan_number": "SAN1L2", "transactiontype": "compounding", "date": "2026-04-04T14:32:56.052185+00:00", "amountpaid": "0.00", "currentprincipal": "32611.72", "currentinterest": "0.00", "principlebalance": "344577.06", "interestbalance": "0.00"},
+    {"statementid": 142, "loan_number": "SAN1L4", "transactiontype": "modify", "date": "2026-04-18T18:18:50.275955+00:00", "amountpaid": "1000.00", "currentprincipal": "0.00", "currentinterest": "0.00", "principlebalance": "11000.00", "interestbalance": "300.04"},
+    {"statementid": 146, "loan_number": "SAN1L4", "transactiontype": "modify", "date": "2026-04-19T17:33:14.503029+00:00", "amountpaid": "0.00", "currentprincipal": "0.00", "currentinterest": "0.00", "principlebalance": "13000.00", "interestbalance": "185.61"},
+    {"statementid": 148, "loan_number": "SAN1L4", "transactiontype": "addColl", "date": "2026-04-20T05:06:10.503000+00:00", "amountpaid": "12.00", "currentprincipal": "0.00", "currentinterest": "12.00", "principlebalance": "13000.00", "interestbalance": "133.88"}
+  ]
+}

@@ -1,0 +1,5 @@
+# Local development and operator scripts.
+-r requirements.txt
+uvicorn[standard]>=0.30,<1
+python-dotenv>=1.0,<2
+pip-audit>=2.7

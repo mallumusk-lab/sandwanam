@@ -1,20 +1,17 @@
-import { BrowserRouter } from "react-router-dom";
-import React from "react";
-import ReactDOM from "react-dom/client";
-import App from "./App.jsx";
-import "./index.css";
-import { Provider } from "react-redux";
+import { StrictMode } from "react";
+import { createRoot } from "react-dom/client";
+import { App } from "./app/App.jsx";
+import { applyTheme, storedTheme } from "./ui/theme.js";
+import "./ui/tokens.css";
+import "./ui/base.css";
+import "./ui/components.css";
 
-import store, { persistor } from "./store/store.jsx";
-import { PersistGate } from "redux-persist/integration/react";
-ReactDOM.createRoot(document.getElementById("root")).render(
-  <Provider store={store}>
-    <PersistGate persistor={persistor} loading={null}>
-      <React.StrictMode>
-        <BrowserRouter>
-          <App />
-        </BrowserRouter>
-      </React.StrictMode>
-    </PersistGate>
-  </Provider>
+// Applied before the first render (and without an inline script, so the
+// Content-Security-Policy can forbid them).
+applyTheme(storedTheme());
+
+createRoot(document.getElementById("root")).render(
+  <StrictMode>
+    <App />
+  </StrictMode>,
 );
