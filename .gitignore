@@ -36,3 +36,6 @@ desktop.ini
 # Vite temporary files
 vite.config.js.timestamp*
 *.timestamp*.mjs
+
+.vercel
+.env*

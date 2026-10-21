@@ -54,8 +54,21 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         raise ConfigError("APP_ENV must be production, preview or development.")
 
     database_url = env.get("DATABASE_URL") or None
-    if database_url and database_url.startswith("postgres://"):
-        database_url = "postgresql://" + database_url[len("postgres://"):]
+    if database_url:
+        database_url = database_url.strip().strip('"').strip("'")
+        if database_url.startswith("postgres://"):
+            database_url = "postgresql://" + database_url[len("postgres://"):]
+        if "://" in database_url and "@" in database_url:
+            try:
+                from urllib.parse import quote, unquote
+
+                prefix, rest = database_url.split("://", 1)
+                userinfo, hostdb = rest.rsplit("@", 1)
+                if ":" in userinfo:
+                    user, pwd = userinfo.split(":", 1)
+                    database_url = f"{prefix}://{user}:{quote(unquote(pwd), safe='')}@{hostdb}"
+            except Exception:
+                pass
     cron_secret = env.get("CRON_SECRET") or None
     cookie_secure = env.get("COOKIE_SECURE", "true").strip().lower() != "false"
     extra = tuple(o.strip().rstrip("/") for o in env.get("TRUSTED_ORIGINS", "").split(",") if o.strip())

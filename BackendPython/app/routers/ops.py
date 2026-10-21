@@ -6,7 +6,7 @@ import secrets
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
-from .. import db
+from .. import db, logs
 from ..config import settings
 from ..domain.dates import now_utc
 from ..errors import Unauthorized
@@ -27,7 +27,8 @@ async def ready() -> JSONResponse:
         pool = await db.pool()
         async with pool.acquire(timeout=5) as connection:
             await connection.fetchval("SELECT 1")
-    except Exception:  # report not-ready without leaking connection details
+    except Exception as exc:  # report not-ready without leaking connection details
+        logs.error("ready_check_failed", exc_type=type(exc).__name__, exc=str(exc))
         return JSONResponse({"status": "unavailable"}, status_code=503)
     return JSONResponse({"status": "ready"})
 
