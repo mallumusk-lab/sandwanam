@@ -1,4 +1,5 @@
 import asyncio
+import importlib.util
 import unittest
 from datetime import date, timedelta
 from decimal import Decimal as D
@@ -41,11 +42,12 @@ class Fixture(unittest.TestCase):
     def customer(self, who=None, phone="9876543210", name="Lakshmi Nair"):
         return run(customers_service.create(self.repos, who or self.san, NewCustomer(name, phone, "Uchakkada, Kerala")))
 
-    def loan(self, who=None, customer_id=None, principal="100000", rate="12", loan_date=None, request_id="req-loan"):
+    def loan(self, who=None, customer_id=None, principal="100000", rate="12", request_id="req-loan", now=NOW):
+        """A new loan dated `now` (daily entries are always dated on the day they are made)."""
         customer_id = customer_id or self.customer(who)["id"]
         data = NewLoan(customer_id, [{"name": "Chain", "qty": 1}, {"name": "Ring", "qty": 2}], "50.00", "2.00",
-                       principal, rate, 12, loan_date)
-        return run(loans_service.create(self.repos, who or self.san, data, request_id=request_id, now=NOW))
+                       principal, rate, 12)
+        return run(loans_service.create(self.repos, who or self.san, data, request_id=request_id, now=now))
 
 
 class AuthTests(Fixture):
@@ -181,12 +183,12 @@ class LoanTests(Fixture):
         self.loan()
         later = NOW + timedelta(days=9)  # 19 March: 10 inclusive days → 328.77
         with self.assertRaises(Conflict) as ctx:
-            run(loans_service.collect(self.repos, self.san, "SAN1L1", amount="500", on=None, expected_total="100032.88",
+            run(loans_service.collect(self.repos, self.san, "SAN1L1", amount="500", expected_total="100032.88",
                                       request_id="pay-1", now=later))
         self.assertEqual(ctx.exception.code, "outstanding_changed")
-        first = run(loans_service.collect(self.repos, self.san, "SAN1L1", amount="500", on=None,
+        first = run(loans_service.collect(self.repos, self.san, "SAN1L1", amount="500",
                                           expected_total="100328.77", request_id="pay-1", now=later))
-        again = run(loans_service.collect(self.repos, self.san, "SAN1L1", amount="500", on=None,
+        again = run(loans_service.collect(self.repos, self.san, "SAN1L1", amount="500",
                                           expected_total="100328.77", request_id="pay-1", now=later))
         self.assertTrue(again["replayed"])
         self.assertEqual(first["statement_id"], again["statement_id"])
@@ -199,18 +201,20 @@ class LoanTests(Fixture):
     def test_overpayment_and_backdating_are_rejected_without_side_effects(self):
         self.loan()
         before = len(self.repos.state.statements)
-        with self.assertRaises(Invalid):
-            run(loans_service.collect(self.repos, self.san, "SAN1L1", amount="200000", on=None, expected_total=None,
+        with self.assertRaises(Invalid) as ctx:
+            run(loans_service.collect(self.repos, self.san, "SAN1L1", amount="200000", expected_total=None,
                                       request_id="pay-x", now=NOW))
-        with self.assertRaises(Forbidden):
-            run(loans_service.collect(self.repos, self.san, "SAN1L1", amount="10", on=date(2025, 3, 1),
-                                      expected_total=None, request_id="pay-y", now=NOW))
+        self.assertEqual(ctx.exception.code, "first_week_clears_principal")
+        with self.assertRaises(Invalid) as ctx:  # out of order: a clock behind the latest entry's day
+            run(loans_service.collect(self.repos, self.san, "SAN1L1", amount="10", expected_total=None,
+                                      request_id="pay-y", now=NOW - timedelta(days=2)))
+        self.assertEqual(ctx.exception.code, "backdated")
         self.assertEqual(len(self.repos.state.statements), before)
 
     def test_other_branch_cannot_post(self):
         self.loan()
         with self.assertRaises(NotFound):
-            run(loans_service.collect(self.repos, self.swa, "SAN1L1", amount="10", on=None, expected_total=None,
+            run(loans_service.collect(self.repos, self.swa, "SAN1L1", amount="10", expected_total=None,
                                       request_id="pay-z", now=NOW))
 
     def test_close_records_cash_received_and_write_off(self):
@@ -236,12 +240,12 @@ class LoanTests(Fixture):
         self.assertIsNotNone(loan["closed_at"])
         self.assertEqual(self.repos.state.customers[1]["loanstatus"], "0")
         with self.assertRaises(Conflict):
-            run(loans_service.collect(self.repos, self.san, "SAN1L1", amount="1", on=None, expected_total=None,
+            run(loans_service.collect(self.repos, self.san, "SAN1L1", amount="1", expected_total=None,
                                       request_id="late", now=closing_day))
 
     def test_top_up_and_item_edit(self):
         self.loan()
-        run(loans_service.top_up(self.repos, self.san, "SAN1L1", amount="5000", on=None, expected_total=None,
+        run(loans_service.top_up(self.repos, self.san, "SAN1L1", amount="5000", expected_total=None,
                                  request_id="top-1", now=NOW))
         self.assertEqual(self.repos.state.loans["SAN1L1"]["refreshprincipleamount"], D("105000.00"))
         entries_before = len(self.repos.state.statements)
@@ -249,21 +253,27 @@ class LoanTests(Fixture):
         self.assertEqual(len(self.repos.state.statements), entries_before, "editing items must not touch the ledger")
         self.assertEqual(self.repos.state.loans["SAN1L1"]["particulars"], "Bangle(3)")
 
-    def test_head_office_can_backdate_in_order(self):
-        number = self.loan(self.hq, customer_id=self.customer(self.hq)["id"], loan_date=date(2025, 3, 1),
-                           request_id="old")["loan_number"]
+    def test_daily_entries_are_dated_today_and_in_order(self):
+        """Replaces head-office backdating: every daily entry is dated on the day it is made."""
+        opened = utc(2025, 3, 1, 6, 0)
+        number = self.loan(self.hq, customer_id=self.customer(self.hq)["id"], request_id="old",
+                           now=opened)["loan_number"]
         self.assertEqual(number, "AD1L1")
-        run(loans_service.collect(self.repos, self.hq, number, amount="100", on=date(2025, 3, 5),
-                                  expected_total=None, request_id="p1", now=NOW))
-        with self.assertRaises(Invalid):
-            run(loans_service.collect(self.repos, self.hq, number, amount="100", on=date(2025, 3, 4),
-                                      expected_total=None, request_id="p2", now=NOW))
-        dates_ = [s["date"] for s in self.repos.state.statements]
-        self.assertEqual(dates_, sorted(dates_))
+        paid_at = utc(2025, 3, 5, 6, 0)
+        run(loans_service.collect(self.repos, self.hq, number, amount="100", expected_total=None,
+                                  request_id="p1", now=paid_at))
+        with self.assertRaises(Invalid) as ctx:
+            run(loans_service.collect(self.repos, self.hq, number, amount="100", expected_total=None,
+                                      request_id="p2", now=utc(2025, 3, 4, 6, 0)))
+        self.assertEqual(ctx.exception.code, "backdated")
+        stored = [s["date"] for s in self.repos.state.statements]
+        self.assertEqual(stored, sorted(stored))
+        self.assertEqual(stored, [opened, paid_at], "stored at the real time of each entry")
+        self.assertEqual(self.repos.state.loans[number]["date"], opened)
 
     def test_cron_compounding_runs_once(self):
-        number = self.loan(self.hq, customer_id=self.customer(self.hq)["id"], loan_date=date(2024, 3, 1),
-                           request_id="year")["loan_number"]
+        number = self.loan(self.hq, customer_id=self.customer(self.hq)["id"], request_id="year",
+                           now=utc(2024, 3, 1, 6, 0))["loan_number"]
         self.assertEqual(run(loans_service.apply_due_compounding(self.repos, number, NOW)), 1)
         self.assertEqual(run(loans_service.apply_due_compounding(self.repos, number, NOW)), 0)
         compounding = [s for s in self.repos.state.statements if s["transactiontype"] == "compounding"]
@@ -279,7 +289,7 @@ class ReviewFixes(Fixture):
         for call in (
             lambda: customers_service.detail(self.repos, limited, 1, NOW),
             lambda: loans_service.detail(self.repos, limited, "SAN1L1", NOW),
-            lambda: loans_service.collect(self.repos, limited, "SAN1L1", amount="10", on=None, expected_total=None,
+            lambda: loans_service.collect(self.repos, limited, "SAN1L1", amount="10", expected_total=None,
                                           request_id="perm-1", now=NOW),
             lambda: receipts_service.for_loan(self.repos, limited, "SAN1L1", NOW),
         ):
@@ -289,20 +299,22 @@ class ReviewFixes(Fixture):
     def test_closing_a_loan_with_nothing_owed(self):
         self.loan()
         loan = self.repos.state.loans["SAN1L1"]
+        # Settled after day 7, so the first-week charge on the peak no longer applies.
+        later = NOW + timedelta(days=8)
         self.repos.state.statements.append(dict(self.repos.state.statements[0], statementid=99, transactiontype="addColl",
                                                 principlebalance=D("0.00"), interestbalance=D("0.00"),
-                                                date=NOW + timedelta(seconds=1), client_request_id=None))
-        quote = run(loans_service.closing_quote(self.repos, self.san, "SAN1L1", NOW))
+                                                date=later + timedelta(seconds=1), client_request_id=None))
+        quote = run(loans_service.closing_quote(self.repos, self.san, "SAN1L1", later))
         self.assertEqual(quote["total"], "0.00")
         result = run(loans_service.close(self.repos, self.san, "SAN1L1", amount_received="0", write_off_remaining=False,
-                                         expected_total="0.00", request_id="close-zero", now=NOW))
+                                         expected_total="0.00", request_id="close-zero", now=later))
         self.assertIsNone(result["statement_id"])
         self.assertEqual(loan["loantype"], "closed")
 
     def test_earlier_same_day_payment_keeps_its_own_receipt(self):
         self.loan()
         morning = NOW + timedelta(days=9)
-        paid = run(loans_service.collect(self.repos, self.san, "SAN1L1", amount="500", on=None, expected_total=None,
+        paid = run(loans_service.collect(self.repos, self.san, "SAN1L1", amount="500", expected_total=None,
                                          request_id="am-pay", now=morning))
         afternoon = morning + timedelta(hours=5)
         quote = run(loans_service.closing_quote(self.repos, self.san, "SAN1L1", afternoon))
@@ -427,16 +439,16 @@ class AdminTests(Fixture):
 
     def test_restore_requires_superadmin_and_confirmation(self):
         with self.assertRaises(Forbidden):
-            run(backup_service.restore(self.repos, self.hq, document={}, snapshot_id=None, confirmation="RESTORE", now=NOW))
+            run(backup_service.restore(self.repos, self.hq, document={}, confirmation="RESTORE", now=NOW))
         with self.assertRaises(Invalid):
-            run(backup_service.restore(self.repos, self.root, document={}, snapshot_id=None, confirmation="yes", now=NOW))
+            run(backup_service.restore(self.repos, self.root, document={}, confirmation="yes", now=NOW))
         with self.assertRaises(Forbidden):
-            run(backup_service.list_snapshots(self.repos, self.san))
+            run(backup_service.check(self.repos, self.san, document={}))
 
     def test_receipts_come_from_the_ledger(self):
         self.loan()
         later = NOW + timedelta(days=9)
-        paid = run(loans_service.collect(self.repos, self.san, "SAN1L1", amount="1000", on=None, expected_total=None,
+        paid = run(loans_service.collect(self.repos, self.san, "SAN1L1", amount="1000", expected_total=None,
                                          request_id="rc-1", now=later))
         receipt = run(receipts_service.for_statement(self.repos, self.san, paid["statement_id"], later))
         self.assertEqual(receipt["entry"]["amount_paid"], "1000.00")
@@ -454,6 +466,222 @@ class AdminTests(Fixture):
         self.assertIsNotNone(closing["closing_writeoff"])
         earlier = run(receipts_service.for_statement(self.repos, self.san, paid["statement_id"], later))
         self.assertFalse(earlier["is_closing"], "older payments keep their own receipt title")
+
+
+class FirstWeekServiceTests(Fixture):
+    """The first-7-days rule through the services: the user's example, 100000 at 18% from 10 March."""
+
+    def outstanding(self, number, now):
+        return run(loans_service.detail(self.repos, self.san, number, now))["loan"]["outstanding"]
+
+    def scenario(self):
+        """Pays 30000 on day 2 and adds 50000 on day 4, each against the amount shown that day."""
+        number = self.loan(rate="18")["loan_number"]
+        day2 = NOW + timedelta(days=1)
+        shown = self.outstanding(number, day2)
+        self.assertEqual((shown["first_week"], shown["window_peak"], shown["first_week_interest"]),
+                         (True, "100000.00", "345.21"))
+        self.assertEqual((shown["interest"], shown["period_days"]), ("98.63", 2), "interest so far on the peak")
+        run(loans_service.collect(self.repos, self.san, number, amount="30000", expected_total=shown["total"],
+                                  request_id="fw-pay", now=day2))
+        day4 = NOW + timedelta(days=3)
+        shown = self.outstanding(number, day4)
+        run(loans_service.top_up(self.repos, self.san, number, amount="50000", expected_total=shown["total"],
+                                 request_id="fw-top", now=day4))
+        return number
+
+    def test_users_scenario_closes_on_day_five(self):
+        number = self.scenario()
+        payment, top = self.repos.state.statements[1:]
+        self.assertEqual((payment["currentprincipal"], payment["currentinterest"], payment["principlebalance"],
+                          payment["accrued_days"]), (D("-30000.00"), D("0.00"), D("70000.00"), 0))
+        self.assertEqual((top["principlebalance"], top["interestbalance"], top["accrued_days"]),
+                         (D("120000.00"), D("0.00"), 0))
+        day5 = NOW + timedelta(days=4)
+        quote = run(loans_service.closing_quote(self.repos, self.san, number, day5))
+        self.assertEqual((quote["interest"], quote["total"], quote["period_days"]), ("414.25", "120414.25", 7))
+        self.assertEqual((quote["first_week"], quote["window_peak"], quote["first_week_interest"]),
+                         (True, "120000.00", "414.25"))
+        run(loans_service.close(self.repos, self.san, number, amount_received=quote["total"], write_off_remaining=False,
+                                expected_total=quote["total"], request_id="fw-close", now=day5))
+        closing = self.repos.state.statements[-1]
+        self.assertEqual((closing["currentinterest"], closing["currentprincipal"], closing["accrued_days"]),
+                         (D("414.25"), D("-120000.00"), 7))
+        self.assertEqual(self.repos.state.loans[number]["loantype"], "closed")
+
+    def test_day_ten_charges_the_peak_week_plus_three_days_and_matches_the_live_quote(self):
+        number = self.scenario()
+        day10 = NOW + timedelta(days=9)
+        shown = self.outstanding(number, day10)
+        self.assertEqual((shown["interest"], shown["period_days"], shown["first_week"]), ("591.78", 10, False))
+        self.assertEqual(run(loans_service.closing_quote(self.repos, self.san, number, day10))["interest"], "591.78")
+        run(loans_service.collect(self.repos, self.san, number, amount="1000", expected_total=shown["total"],
+                                  request_id="fw-day10", now=day10))
+        payment = self.repos.state.statements[-1]
+        self.assertEqual((payment["currentinterest"], payment["accrued_days"], payment["principlebalance"]),
+                         (D("591.78"), 10, D("119591.78")))
+        self.assertEqual(self.outstanding(number, day10)["period_days"], 1, "inclusive counting resumes")
+
+    def test_payment_that_clears_the_principal_is_refused(self):
+        number = self.loan()["loan_number"]
+        with self.assertRaises(Invalid) as ctx:
+            run(loans_service.collect(self.repos, self.san, number, amount="100000", expected_total=None,
+                                      request_id="fw-all", now=NOW + timedelta(days=2)))
+        self.assertEqual(ctx.exception.code, "first_week_clears_principal")
+        self.assertEqual(len(self.repos.state.statements), 1)
+
+    def test_statement_explains_each_row_and_receipts_do_not(self):
+        number = self.scenario()
+        day10 = NOW + timedelta(days=9)
+        run(loans_service.collect(self.repos, self.san, number, amount="1000", expected_total=None,
+                                  request_id="fw-day10", now=day10))
+        rows = list(reversed(run(loans_service.detail(self.repos, self.san, number, day10))["statements"]))
+        self.assertEqual([r["calculation"]["method"] for r in rows],
+                         ["opening", "first_week", "first_week", "first_week_settlement"])
+        self.assertEqual([r["in_first_week"] for r in rows], [False, True, True, False])
+        settle = rows[-1]["calculation"]
+        self.assertEqual(
+            {k: settle[k] for k in ("peak_principal", "first_week_days", "extra_days", "extra_principal", "days",
+                                    "rate", "interest_accrued", "interest_paid", "principal_paid",
+                                    "principal_balance", "interest_balance", "period_from", "period_to")},
+            {"peak_principal": "120000.00", "first_week_days": 7, "extra_days": 3, "extra_principal": "120000.00",
+             "days": 10, "rate": "18.00", "interest_accrued": "591.78", "interest_paid": "591.78",
+             "principal_paid": "408.22", "principal_balance": "119591.78", "interest_balance": "0.00",
+             "period_from": "2025-03-10", "period_to": "2025-03-19"},
+        )
+        self.assertIn("₹120000.00 × 18% × 7 ÷ 365", settle["note"])
+        receipt = run(receipts_service.for_statement(self.repos, self.san, rows[1]["id"], day10))
+        self.assertNotIn("calculation", receipt["entry"])
+        self.assertTrue(receipt["entry"]["in_first_week"])
+
+    def test_earlier_rule_first_week_payment_is_not_flagged_on_its_receipt(self):
+        number = self.loan(rate="18")["loan_number"]
+        day3 = NOW + timedelta(days=2)
+        paid = run(loans_service.collect(self.repos, self.san, number, amount="500", expected_total=None,
+                                         request_id="fw-old", now=day3))
+        current = run(receipts_service.for_statement(self.repos, self.san, paid["statement_id"], day3))
+        self.assertTrue(current["entry"]["in_first_week"], "a first-7-days payment charges nothing")
+        row = self.repos.state.statements[-1]  # as posted before the rule shipped: 3 days of interest charged
+        row.update(currentinterest=D("147.95"), currentprincipal=D("-352.05"), principlebalance=D("99647.95"),
+                   accrued_days=3)
+        receipt = run(receipts_service.for_statement(self.repos, self.san, paid["statement_id"], day3))
+        self.assertEqual(receipt["entry"]["interest_paid"], "147.95")
+        self.assertFalse(receipt["entry"]["in_first_week"], "it paid interest, so it did not go to principal only")
+
+    def test_import_preview_applies_the_first_week_rule(self):
+        loan = import_service.HistoryLoan([{"name": "Chain", "qty": 1}], "20", "1", "100000", "18", 12, date(2025, 1, 1))
+        entries = [import_service.HistoryEntry(date(2025, 1, 2), "addColl", "30000"),
+                   import_service.HistoryEntry(date(2025, 1, 4), "disbursement", "50000"),
+                   import_service.HistoryEntry(date(2025, 1, 10), "addColl", "1000")]
+        preview = run(import_service.preview(self.san, loan, entries, NOW))
+        self.assertEqual([e["accrued_days"] for e in preview["entries"]], [0, 0, 0, 10])
+        self.assertEqual(preview["entries"][1]["principal_change"], "-30000.00")
+        self.assertEqual(preview["entries"][3]["interest_paid"], "591.78")
+        self.assertEqual(preview["principal_balance"], "119591.78")
+
+
+class DailyEntryDateTests(unittest.TestCase):
+    def test_daily_entry_bodies_have_no_date_field(self):
+        """Read from the source so it also runs where pydantic is not installed."""
+        import ast
+        from pathlib import Path
+        tree = ast.parse((Path(__file__).resolve().parents[1] / "app" / "schemas.py").read_text(encoding="utf-8"))
+        classes = {n.name: n for n in tree.body if isinstance(n, ast.ClassDef)}
+        for name in ("LoanIn", "PostingIn"):
+            fields = {s.target.id for s in classes[name].body if isinstance(s, ast.AnnAssign)}
+            with self.subTest(name):
+                self.assertTrue(fields, "the class still exists")
+                self.assertFalse(fields & {"date", "loan_date"}, "daily entries are always dated today")
+                self.assertEqual([b.id for b in classes[name].bases], ["Body"], "unknown fields are rejected")
+        self.assertIn("extra='forbid'", ast.unparse(classes["Body"]))
+
+    @unittest.skipIf(importlib.util.find_spec("pydantic") is None, "pydantic is not installed")
+    def test_request_bodies_reject_a_date_on_daily_entries(self):
+        from pydantic import ValidationError
+
+        from app.schemas import LoanIn, PostingIn
+        loan = {"customer_id": 1, "items": [{"name": "Chain", "qty": 1}], "gross_weight": "10", "deduction": "0",
+                "principal": "1000", "rate": "18", "tenure_months": 12, "request_id": "req-12345"}
+        LoanIn(**loan)
+        PostingIn(amount="10", request_id="req-12345")
+        with self.assertRaises(ValidationError):
+            LoanIn(**loan, loan_date="2025-03-01")
+        for field in ("date", "loan_date"):
+            with self.subTest(field), self.assertRaises(ValidationError):
+                PostingIn(amount="10", request_id="req-12345", **{field: "2025-03-01"})
+
+
+class AccessTests(Fixture):
+    SUPERADMIN_REFUSED = "A SuperAdmin account cannot use this feature."
+
+    def test_superadmin_works_with_customers_and_loans_of_any_branch(self):
+        root = self.root
+        self.assertEqual(root.effective_permissions(), ["newcustomer", "userlist"])
+        self.assertTrue(root.is_head_office, "sees every branch and keeps backups")
+        customer = run(customers_service.create(self.repos, root, NewCustomer("Ravi Kumar", "9000000001", "Pozhiyoor", "SAN")))
+        number = self.loan(root, customer_id=customer["id"], request_id="root-loan")["loan_number"]
+        later = NOW + timedelta(days=9)
+        for call in (
+            lambda: customers_service.search(self.repos, root, branch="SAN", term=None, page=1, page_size=20),
+            lambda: customers_service.detail(self.repos, root, customer["id"], later),
+            lambda: loans_service.detail(self.repos, root, number, later),
+            lambda: loans_service.collect(self.repos, root, number, amount="100", expected_total=None,
+                                          request_id="root-pay", now=later),
+            lambda: loans_service.top_up(self.repos, root, number, amount="100", expected_total=None,
+                                         request_id="root-top", now=later),
+            lambda: loans_service.edit_items(self.repos, root, number, [{"name": "Bangle", "qty": 1}]),
+            lambda: loans_service.set_follow_up(self.repos, root, number, date(2025, 4, 1), later),
+            lambda: receipts_service.for_loan(self.repos, root, number, later),
+        ):
+            run(call())
+        quote = run(loans_service.closing_quote(self.repos, root, number, later))
+        run(loans_service.close(self.repos, root, number, amount_received=quote["total"], write_off_remaining=False,
+                                expected_total=quote["total"], request_id="root-close", now=later))
+        self.assertEqual(self.repos.state.loans[number]["loantype"], "closed")
+
+    def test_superadmin_is_refused_analytics_reports_history_gold_rate_and_audit(self):
+        from app.services import maintenance_service
+        root = self.root
+        refused = {
+            "dashboard": lambda: reports_service.dashboard(self.repos, root, None, NOW),
+            "portfolio": lambda: reports_service.portfolio(self.repos, root, None, NOW),
+            "performance": lambda: reports_service.performance(self.repos, root, None, None, None, NOW),
+            "details": lambda: reports_service.details(self.repos, root, "disbursed", None, None, None, NOW),
+            "trends": lambda: reports_service.trends(self.repos, root, None, NOW),
+            "transactions": lambda: reports_service.transactions(self.repos, root, branch=None, start=None, end=None,
+                                                                 term=None, kind=None, page=1, page_size=20, now=NOW),
+            "csv": lambda: reports_service.transactions_csv(self.repos, root, branch=None, start=None, end=None,
+                                                            term=None, kind=None, now=NOW),
+            "import preview": lambda: import_service.preview(root, ImportTests.LOAN, [], NOW),
+            "import": lambda: import_service.commit(self.repos, root, customer_id=1, new_customer=None,
+                                                    loan=ImportTests.LOAN, entries=[], request_id="root-imp", now=NOW),
+        }
+        for name, call in refused.items():
+            with self.subTest(name), self.assertRaises(Forbidden) as ctx:
+                run(call())
+            self.assertEqual(ctx.exception.message, self.SUPERADMIN_REFUSED)
+        for name, call in {
+            "gold rate": lambda: reports_service.set_gold_rate(self.repos, root, "6000"),
+            "audit log": lambda: maintenance_service.audit_page(self.repos, root, None, 1, 20),
+        }.items():
+            with self.subTest(name), self.assertRaises(Forbidden) as ctx:
+                run(call())
+            self.assertEqual(ctx.exception.message, "Only head office can do this.")
+
+    def test_head_office_keeps_every_feature_with_gold_rate_and_audit_log(self):
+        from app.services import maintenance_service
+        from app.services.context import PERMISSIONS
+        self.assertEqual(self.hq.effective_permissions(), list(PERMISSIONS))
+        self.assertIsNotNone(run(reports_service.set_gold_rate(self.repos, self.hq, "6000")))
+        page = run(maintenance_service.audit_page(self.repos, self.hq, None, 1, 20))
+        self.assertEqual(page["items"][0]["action"], "SET_GOLD_RATE")
+        with self.assertRaises(Forbidden) as ctx:
+            run(maintenance_service.audit_page(self.repos, self.san, None, 1, 20))
+        self.assertEqual(ctx.exception.message, "Only head office can do this.")
+        self.repos.add_account("Counter", "Counter-only-2026", "branch", "CTR", permissions="newcustomer,userlist")
+        with self.assertRaises(Forbidden) as ctx:
+            run(import_service.preview(actor(self.repos, "Counter"), ImportTests.LOAN, [], NOW))
+        self.assertEqual(ctx.exception.message, "Your branch does not have access to this feature.")
 
 
 if __name__ == "__main__":

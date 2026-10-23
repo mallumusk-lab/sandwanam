@@ -12,22 +12,34 @@ LOAN_FIELDS = (
 )
 CUSTOMER_FIELDS = "c.branch_prefix, c.customername, c.phone, c.user_id, c.address"
 
-# Latest ledger position, number of compoundings and last collection, per loan.
-POSITION_JOINS = """
+# Totals over a loan's whole ledger. The peak principal and the interest collected only
+# matter while the loan is still in its first 7 days, when every entry lies in those days
+# (app/domain/ledger.py, first-week rule).
+LEDGER_TOTALS = (
+    "COUNT(*) FILTER (WHERE s.transactiontype = 'compounding') AS compoundings, "
+    "MAX(s.principlebalance) AS peak_principal, "
+    "COALESCE(SUM(s.currentinterest) FILTER (WHERE s.transactiontype = 'addColl'), 0) AS interest_collected"
+)
+
+# Latest ledger position, ledger totals and last collection, per loan.
+POSITION_JOINS = f"""
 LEFT JOIN LATERAL (
     SELECT s.date AS last_entry_at, s.principlebalance AS last_principal, s.interestbalance AS last_interest
     FROM statement s WHERE s.loan_number = l.loan_number
     ORDER BY s.date DESC, s.statementid DESC LIMIT 1
 ) ls ON TRUE
 LEFT JOIN LATERAL (
-    SELECT COUNT(*) AS compoundings FROM statement s WHERE s.loan_number = l.loan_number AND s.transactiontype = 'compounding'
+    SELECT {LEDGER_TOTALS} FROM statement s WHERE s.loan_number = l.loan_number
 ) cc ON TRUE
 LEFT JOIN LATERAL (
     SELECT MAX(s.date) AS last_payment_at FROM statement s
     WHERE s.loan_number = l.loan_number AND s.transactiontype = 'addColl' AND s.amountpaid > 0
 ) lp ON TRUE
 """
-POSITION_FIELDS = "ls.last_entry_at, ls.last_principal, ls.last_interest, cc.compoundings, lp.last_payment_at"
+POSITION_FIELDS = (
+    "ls.last_entry_at, ls.last_principal, ls.last_interest, cc.compoundings, cc.peak_principal, "
+    "cc.interest_collected, lp.last_payment_at"
+)
 
 
 class LoansRepo:
@@ -156,15 +168,10 @@ class StatementsRepo:
             loan_number,
         )
 
-    async def history(self, loan_number: str) -> list[dict]:
-        return await self.db.fetch(
-            "SELECT date, transactiontype, accrued_days FROM statement WHERE loan_number = $1 ORDER BY date, statementid",
-            loan_number,
-        )
-
-    async def compounding_count(self, loan_number: str) -> int:
-        return await self.db.fetchval(
-            "SELECT COUNT(*) FROM statement WHERE loan_number = $1 AND transactiontype = 'compounding'", loan_number
+    async def totals(self, loan_number: str) -> dict:
+        """Compoundings, peak principal and interest collected (see LEDGER_TOTALS)."""
+        return await self.db.fetchrow(
+            f"SELECT {LEDGER_TOTALS} FROM statement s WHERE s.loan_number = $1", loan_number
         )
 
     async def by_request_id(self, request_id: str) -> dict | None:

@@ -6,7 +6,7 @@ import { passwordError } from "../../lib/validation.js";
 import { Button } from "../../ui/controls.jsx";
 import { DataTable } from "../../ui/DataTable.jsx";
 import { ErrorState, SkeletonRows, useToast } from "../../ui/feedback.jsx";
-import { CheckboxField, TextField, TextareaField } from "../../ui/fields.jsx";
+import { CheckboxField, PasswordField, TextField, TextareaField } from "../../ui/fields.jsx";
 import { ConfirmDialog, Modal } from "../../ui/Modal.jsx";
 import { Banner, PageHeader, Pill, Card } from "../../ui/surfaces.jsx";
 
@@ -139,7 +139,7 @@ function BranchDialog({ account, onClose, onSaved }) {
           <Banner tone="info">Head office always has every feature and sees all branches.</Banner>
         )}
         {creating ? (
-          <TextField label="Temporary password" type="password" autoComplete="new-password" value={form.temporary_password}
+          <PasswordField label="Temporary password" autoComplete="new-password" value={form.temporary_password}
             onChange={set("temporary_password")} error={errors.temporary_password}
             hint="Share it in person. The branch must choose its own password at first sign-in." />
         ) : null}
@@ -169,7 +169,7 @@ function PasswordDialog({ account, onClose, onSaved }) {
     <Modal open onClose={onClose} busy={pending} title={`Reset password · ${account.name}`}
       description="The account is signed out everywhere and must choose a new password at next sign-in."
       footer={<><Button onClick={onClose} disabled={pending}>Cancel</Button><Button variant="primary" loading={pending} onClick={save}>Set temporary password</Button></>}>
-      <TextField label="Temporary password" type="password" autoComplete="new-password" value={password}
+      <PasswordField label="Temporary password" autoComplete="new-password" value={password}
         onChange={(e) => setPassword(e.target.value)} error={error} data-autofocus />
     </Modal>
   );

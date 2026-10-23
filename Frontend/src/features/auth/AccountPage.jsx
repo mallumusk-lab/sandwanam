@@ -2,10 +2,10 @@ import { useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "../../auth/AuthContext.jsx";
 import { useDocumentTitle } from "../../hooks/useAsync.js";
-import { ACCOUNT_LABELS, FEATURES, homePath } from "../../lib/permissions.js";
+import { ACCOUNT_LABELS, ALL_BRANCHES_LABEL, FEATURES, homePath } from "../../lib/permissions.js";
 import { passwordError } from "../../lib/validation.js";
 import { Button } from "../../ui/controls.jsx";
-import { TextField, focusFirstError } from "../../ui/fields.jsx";
+import { PasswordField, focusFirstError } from "../../ui/fields.jsx";
 import { useToast } from "../../ui/feedback.jsx";
 import { Banner, Card, Details, PageHeader } from "../../ui/surfaces.jsx";
 
@@ -57,12 +57,12 @@ export default function AccountPage() {
         </Banner>
       ) : null}
       <input type="text" name="username" autoComplete="username" value={user.username} readOnly hidden />
-      <TextField label="Current password" type="password" autoComplete="current-password" value={form.current}
+      <PasswordField label="Current password" autoComplete="current-password" value={form.current}
         onChange={set("current")} error={errors.current} />
-      <TextField label="New password" type="password" autoComplete="new-password" value={form.next}
+      <PasswordField label="New password" autoComplete="new-password" value={form.next}
         onChange={set("next")} error={errors.next}
         hint="At least 10 characters. A short phrase of unrelated words works well." />
-      <TextField label="Repeat the new password" type="password" autoComplete="new-password" value={form.confirm}
+      <PasswordField label="Repeat the new password" autoComplete="new-password" value={form.confirm}
         onChange={set("confirm")} error={errors.confirm} />
       <div className="form-actions">
         {forced ? <Button onClick={logout}>Sign out</Button> : null}
@@ -91,7 +91,7 @@ export default function AccountPage() {
               ["Username", user.username],
               ["Name", user.display_name],
               ["Account type", ACCOUNT_LABELS[user.account_type]],
-              ["Branch", user.branch ?? "All branches"],
+              ["Branch", user.branch ?? ALL_BRANCHES_LABEL],
               ["Features", user.permissions.map((p) => FEATURES[p]).join(", ") || "None"],
             ]}
           />

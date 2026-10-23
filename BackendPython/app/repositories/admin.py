@@ -17,8 +17,14 @@ _TABLE_ORDER_BY = {
     "loan_data": "loanid",
     "statement": "statementid",
     "app_settings": "key",
+    "cash_days": "id",
+    "cash_entries": "id",
 }
-_SERIALS = (("customers", "customerid"), ("loan_data", "loanid"), ("statement", "statementid"))
+# Restore order: parents first (cash_entries.day_id references cash_days; cash_days.branch_prefix
+# references role, which a restore never touches).
+_REPLACED_TABLES = ("customers", "loan_data", "statement", "cash_days", "cash_entries")
+_SERIALS = (("customers", "customerid"), ("loan_data", "loanid"), ("statement", "statementid"),
+            ("cash_days", "id"), ("cash_entries", "id"))
 
 # Constraints added NOT VALID by migrations 002/003: legacy rows may not satisfy them until
 # 004 validates them. A restore re-inserts every row, so they are dropped for the copy and
@@ -115,14 +121,14 @@ class BackupsRepo:
         return sorted(prefixes - known)
 
     async def replace_business_data(self, tables: dict[str, list[tuple]]) -> None:
-        """Replace customers, loans and ledger. Must run inside a transaction.
+        """Replace customers, loans, ledger and the cash ledger. Must run inside a transaction.
 
         Table and column names come from backup_codec's fixed schema, never from the file.
         """
         for table, name, _ in _RELAXED_CONSTRAINTS:
             await self.db.execute(f"ALTER TABLE {table} DROP CONSTRAINT IF EXISTS {name}")
-        await self.db.execute("TRUNCATE statement, loan_data, customers RESTART IDENTITY")
-        for table in ("customers", "loan_data", "statement"):
+        await self.db.execute("TRUNCATE cash_entries, cash_days, statement, loan_data, customers RESTART IDENTITY")
+        for table in _REPLACED_TABLES:
             columns = backup_codec.columns(table)
             placeholders = ", ".join(
                 f"${i}::jsonb" if name == "items" else f"${i}" for i, name in enumerate(columns, start=1)
@@ -164,37 +170,3 @@ class BackupsRepo:
             """,
             tables.get("app_settings", []),
         )
-
-    async def create_snapshot(self, *, kind: str, created_by: str, payload: bytes, sha256: str) -> int:
-        return await self.db.fetchval(
-            """
-            INSERT INTO backup_snapshots (kind, created_by, size_bytes, sha256, payload)
-            VALUES ($1, $2, $3, $4, $5) RETURNING id
-            """,
-            kind, created_by, len(payload), sha256, payload,
-        )
-
-    async def snapshots(self) -> list[dict]:
-        return await self.db.fetch(
-            "SELECT id, created_at, created_by, kind, size_bytes, sha256 FROM backup_snapshots ORDER BY created_at DESC"
-        )
-
-    async def snapshot(self, snapshot_id: int) -> dict | None:
-        return await self.db.fetchrow(
-            "SELECT id, created_at, kind, sha256, payload FROM backup_snapshots WHERE id = $1", snapshot_id
-        )
-
-    async def prune_snapshots(self, kind: str, keep: int) -> None:
-        """Each kind is pruned on its own, so manual snapshots can never evict nightly or
-        pre-restore safety snapshots."""
-        await self.db.execute(
-            """
-            DELETE FROM backup_snapshots WHERE kind = $1 AND id NOT IN (
-                SELECT id FROM backup_snapshots WHERE kind = $1 ORDER BY created_at DESC LIMIT $2
-            )
-            """,
-            kind, keep,
-        )
-
-    async def latest_snapshot_at(self, kind: str):
-        return await self.db.fetchval("SELECT MAX(created_at) FROM backup_snapshots WHERE kind = $1", kind)

@@ -2,15 +2,13 @@
 can be altered by editing the page address."""
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import datetime
 
 from ..domain import dates
 from ..errors import NotFound
 from . import serialize
 from .context import Actor, ensure_visible
-from .loans_service import live_quote
-
-CLOSING_PAIR_GAP = timedelta(milliseconds=1)
+from .loans_service import CLOSING_PAIR_GAP, live_quote
 
 
 async def _letterhead(repos, branch_prefix: str | None) -> dict | None:
@@ -41,6 +39,7 @@ async def for_statement(repos, actor: Actor, statement_id: int, now: datetime) -
     if row is None:
         raise NotFound("Receipt was not found.")
     receipt = await for_loan(repos, actor, row["loan_number"], now)
+    loan_start = dates.parse_business_date(receipt["loan"]["date"]) if receipt["loan"]["date"] else None
     entries = await repos.statements.for_loan(row["loan_number"])  # newest first
     closing_ids: set[int] = set()
     writeoff = None
@@ -48,7 +47,7 @@ async def for_statement(repos, actor: Actor, statement_id: int, now: datetime) -
         last = entries[0]
         closing_ids.add(last["statementid"])
         if last["transactiontype"] == "writeoff":
-            writeoff = serialize.statement(last)
+            writeoff = serialize.statement(last, loan_start=loan_start)
             previous = entries[1] if len(entries) > 1 else None
             if (
                 previous is not None
@@ -62,7 +61,7 @@ async def for_statement(repos, actor: Actor, statement_id: int, now: datetime) -
         # the closing receipt is the payment's: it shows the cash received and the write-off
         row = next(e for e in entries if e["statementid"] in closing_ids and e["transactiontype"] == "addColl")
     receipt.update({
-        "entry": serialize.statement(row),
+        "entry": serialize.statement(row, loan_start=loan_start),
         "is_closing": is_closing,
         "closing_writeoff": writeoff if is_closing else None,
     })

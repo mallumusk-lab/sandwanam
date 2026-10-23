@@ -1,6 +1,6 @@
 import { Navigate, Outlet, useLocation } from "react-router-dom";
 import { useAuth } from "../auth/AuthContext.jsx";
-import { can } from "../lib/permissions.js";
+import { can, isHeadOfficeStaff } from "../lib/permissions.js";
 import { Button } from "../ui/controls.jsx";
 import { EmptyState, ErrorState, PageLoading } from "../ui/feedback.jsx";
 
@@ -32,11 +32,13 @@ function NoAccess() {
   );
 }
 
-export function RequirePermission({ permission, headOffice = false, superadmin = false, children }) {
+/** headOffice: head office or SuperAdmin; hq: head office staff only; superadmin: SuperAdmin only. */
+export function RequirePermission({ permission, headOffice = false, hq = false, superadmin = false, children }) {
   const { user } = useAuth();
   const allowed =
     (!permission || can(user, permission)) &&
     (!headOffice || user.is_head_office) &&
+    (!hq || isHeadOfficeStaff(user)) &&
     (!superadmin || user.is_superadmin);
   return allowed ? children : <NoAccess />;
 }

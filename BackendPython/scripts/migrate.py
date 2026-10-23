@@ -1,7 +1,7 @@
 """Apply database migrations.
 
     py scripts/migrate.py --preflight      read-only data report (run first)
-    py scripts/migrate.py                  apply 001–003 plus the data steps
+    py scripts/migrate.py                  apply 001–003 and 005 (cash ledger) plus the data steps
     py scripts/migrate.py --branch-prefix User3=VZM   also give other branch accounts their prefix
     py scripts/migrate.py --post-cutover   004: drop the legacy trigger, validate constraints
 
@@ -21,7 +21,7 @@ from app.domain import particulars, validation
 from app.security import passwords
 
 MIGRATIONS = ROOT / "migrations"
-MAIN_STEPS = ("001_baseline", "002_auth_integrity", "003_ledger_reporting")
+MAIN_STEPS = ("001_baseline", "002_auth_integrity", "003_ledger_reporting", "005_cash_ledger")
 POST_CUTOVER = "004_post_cutover"
 
 

@@ -33,6 +33,11 @@ _LOGO_SIGNATURES = {
     "image/webp": (b"RIFF",),
 }
 _DATA_URL = re.compile(r"^data:(image/(?:png|jpeg|webp));base64,([A-Za-z0-9+/=\s]+)$")
+# One plain address: no display name, list, quotes, spaces or angle brackets.
+_EMAIL_RECIPIENT = re.compile(
+    r"^[A-Za-z0-9!#$%&'*+/=?^_`{|}~-]+(?:\.[A-Za-z0-9!#$%&'*+/=?^_`{|}~-]+)*"
+    r"@(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)+[A-Za-z]{2,63}$"
+)
 
 
 class ValidationError(ValueError):
@@ -136,3 +141,11 @@ def logo_data_url(value: str | None) -> str | None:
     if mime == "image/webp" and raw[8:12] != b"WEBP":
         raise ValidationError("logo", "The file content does not match its image type.")
     return f"data:{mime};base64,{base64.b64encode(raw).decode('ascii')}"
+
+
+def email_recipient(value: str | None) -> str:
+    """A single email address for backups (one address only, so a typo can't fan out)."""
+    text = (value or "").strip()
+    if not text or len(text) > 254 or not _EMAIL_RECIPIENT.fullmatch(text) or len(text.split("@")[0]) > 64:
+        raise ValidationError("recipient", "Enter one email address, for example backups@example.com.")
+    return text

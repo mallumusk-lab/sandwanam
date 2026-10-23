@@ -1,6 +1,6 @@
 import { afterEach, test } from "node:test";
 import assert from "node:assert/strict";
-import { ApiError, api, buildUrl, onSessionExpired, setCsrfToken } from "../src/api/client.js";
+import { ApiError, api, buildUrl, download, onSessionExpired, saveBlob, setCsrfToken } from "../src/api/client.js";
 
 const realFetch = globalThis.fetch;
 afterEach(() => {
@@ -60,4 +60,60 @@ test("network failures and server errors get readable messages", async () => {
   await assert.rejects(api.get("/x"), (error) => error.code === "network" && /internet connection/.test(error.message));
   globalThis.fetch = async () => new Response("<html>", { status: 502 });
   await assert.rejects(api.get("/x"), (error) => error.status === 502 && /server had a problem/.test(error.message));
+});
+
+function fakeDownloads() {
+  const saved = [];
+  const realDocument = globalThis.document;
+  const { createObjectURL, revokeObjectURL } = URL;
+  globalThis.document = {
+    createElement: () => {
+      const link = { href: "", download: "", clicked: false, removed: false, click() { this.clicked = true; }, remove() { this.removed = true; } };
+      saved.push(link);
+      return link;
+    },
+    body: { appendChild: (link) => { link.attached = true; } },
+  };
+  URL.createObjectURL = (blob) => {
+    saved.blob = blob;
+    return "blob:test/1";
+  };
+  URL.revokeObjectURL = () => {};
+  const realSetTimeout = globalThis.setTimeout;
+  globalThis.setTimeout = (...args) => {
+    const timer = realSetTimeout(...args);
+    timer.unref?.(); // the 10 s link clean-up must not hold the test process open
+    return timer;
+  };
+  const restore = () => {
+    globalThis.setTimeout = realSetTimeout;
+    globalThis.document = realDocument;
+    URL.createObjectURL = createObjectURL;
+    URL.revokeObjectURL = revokeObjectURL;
+  };
+  return { saved, restore };
+}
+
+test("saveBlob saves through a temporary link; download uses it with the server's file name", async () => {
+  const { saved, restore } = fakeDownloads();
+  try {
+    const blob = new Blob(["%PDF-1.4"], { type: "application/pdf" });
+    saveBlob(blob, "Receipt-R7-SAN1L1.pdf");
+    assert.equal(saved.blob, blob);
+    assert.deepEqual({ ...saved[0], click: undefined, remove: undefined },
+      { href: "blob:test/1", download: "Receipt-R7-SAN1L1.pdf", clicked: true, removed: true, attached: true, click: undefined, remove: undefined });
+
+    globalThis.fetch = async () => new Response(new Uint8Array([0x1f, 0x8b, 8]), {
+      status: 200, headers: { "Content-Type": "application/gzip", "Content-Disposition": 'attachment; filename="backup_2026-10-23_0930IST.json.gz"' },
+    });
+    await download("/example/file", null, "backup.json.gz");
+    assert.equal(saved[1].download, "backup_2026-10-23_0930IST.json.gz");
+    assert.deepEqual(new Uint8Array(await saved.blob.arrayBuffer()), new Uint8Array([0x1f, 0x8b, 8]));
+
+    globalThis.fetch = async () => new Response("a,b", { status: 200, headers: { "Content-Type": "text/csv" } });
+    await download("/reports/transactions.csv", { from: "2026-10-01" }, "transactions.csv");
+    assert.equal(saved[2].download, "transactions.csv");
+  } finally {
+    restore();
+  }
 });

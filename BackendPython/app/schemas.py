@@ -46,13 +46,11 @@ class LoanIn(Body):
     principal: Amount
     rate: Amount
     tenure_months: Annotated[int, Field(ge=1, le=120)]
-    loan_date: Optional[Date] = None
     request_id: RequestId
 
 
 class PostingIn(Body):
     amount: Amount
-    date: Optional[Date] = None
     expected_total: Optional[Amount] = None
     request_id: RequestId
 
@@ -84,8 +82,9 @@ class HistoryLoanIn(Body):
 
 class HistoryEntryIn(Body):
     date: Date
-    kind: Annotated[str, Field(pattern=r"^(addColl|disbursement)$")]
-    amount: Amount
+    kind: Annotated[str, Field(pattern=r"^(addColl|disbursement|close)$")]
+    amount: Amount  # for a close: the amount received (may be 0)
+    write_off_remaining: bool = False  # close only: confirms writing off what remains unpaid
 
 
 class ImportPreviewIn(Body):
@@ -107,6 +106,30 @@ class ImportIn(ImportPreviewIn):
 
 class GoldRateIn(Body):
     per_gram: Amount
+
+
+class CashDayIn(Body):
+    branch: Optional[Annotated[str, Field(max_length=10)]] = None  # head office only
+    opening_counted: Amount
+    request_id: RequestId
+
+
+class CashEntryIn(Body):
+    direction: Annotated[str, Field(pattern=r"^(in|out)$")]
+    category: Annotated[str, Field(max_length=40)]
+    description: Optional[ShortText] = None
+    reference: Optional[Annotated[str, Field(max_length=40)]] = None
+    amount: Amount
+    request_id: RequestId
+
+
+class CashVoidIn(Body):
+    reason: Annotated[str, Field(min_length=3, max_length=255)]
+
+
+class CashCloseIn(Body):
+    closing_counted: Amount
+    expected_total: Amount
 
 
 class BranchFieldsIn(Body):
@@ -134,9 +157,22 @@ class ActiveIn(Body):
     active: bool
 
 
-class RestoreIn(Body):
+class BackupSourceIn(Body):
+    """Exactly one of: a backup object (a parsed .json), a gzipped file as base64, or the emailed
+    password ZIP as base64 with its password. The password is used to decrypt only: it is never
+    stored, logged or audited. Requests stay under the hosting limit (about 4.5 MB)."""
     model_config = ConfigDict(extra="forbid")
 
-    confirmation: Annotated[str, Field(max_length=20)]
-    snapshot_id: Optional[int] = None
     backup: Optional[dict] = None
+    backup_gzip: Optional[Annotated[str, Field(min_length=1, max_length=7_000_000)]] = None
+    backup_zip: Optional[Annotated[str, Field(min_length=1, max_length=4_700_000)]] = None
+    zip_password: Optional[Annotated[str, Field(min_length=12, max_length=128)]] = None
+
+
+class RestoreIn(BackupSourceIn):
+    confirmation: Annotated[str, Field(max_length=20)]
+
+
+class BackupEmailIn(Body):
+    recipient: Optional[Annotated[str, Field(max_length=254)]] = None
+    enabled: bool

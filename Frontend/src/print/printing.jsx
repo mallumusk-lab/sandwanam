@@ -1,24 +1,11 @@
+import { forwardRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { formatDay, todayIST } from "../lib/dates.js";
 import { Button } from "../ui/controls.jsx";
 import { Icon } from "../ui/Icon.jsx";
 import "./print.css";
 
-/** Print just one sheet of a page (e.g. the application form without the receipts). */
-export function printOnly(element) {
-  if (!element) return window.print();
-  element.classList.add("printing-target");
-  document.body.classList.add("printing-section");
-  const cleanup = () => {
-    element.classList.remove("printing-target");
-    document.body.classList.remove("printing-section");
-    window.removeEventListener("afterprint", cleanup);
-  };
-  window.addEventListener("afterprint", cleanup);
-  window.print();
-  setTimeout(cleanup, 1000);
-}
-
+/** Back, the title and Print; extra actions (such as Share) sit beside Print. */
 export function PrintToolbar({ title, children }) {
   const navigate = useNavigate();
   return (
@@ -26,22 +13,33 @@ export function PrintToolbar({ title, children }) {
       <Button icon="arrowLeft" onClick={() => navigate(-1)}>Back</Button>
       <h1 className="print-toolbar-title">{title}</h1>
       <div className="cluster">
-        {children ?? <Button variant="primary" icon="printer" onClick={() => window.print()}>Print</Button>}
+        {children}
+        <Button variant="primary" icon="printer" onClick={() => window.print()}>Print</Button>
       </div>
     </div>
   );
 }
 
+/** The letterhead's text lines (shared with the PDF drawing in receiptCanvas.js). */
+export function letterheadText(branch) {
+  return {
+    name: branch?.legal_name ?? branch?.name ?? "Gold Loan Desk",
+    address: branch?.address || "",
+    contact: branch?.email || branch?.phone
+      ? [branch.email && `Email: ${branch.email}`, branch.phone && `Phone: ${branch.phone}`].filter(Boolean).join("  ·  ")
+      : "",
+  };
+}
+
 export function Letterhead({ branch, title, date = todayIST() }) {
+  const text = letterheadText(branch);
   return (
     <header className="letterhead">
       {branch?.logo ? <img src={branch.logo} alt="" className="letterhead-logo" /> : null}
       <div className="letterhead-text">
-        <p className="letterhead-name">{branch?.legal_name ?? branch?.name ?? "Gold Loan Desk"}</p>
-        {branch?.address ? <p>{branch.address}</p> : null}
-        {branch?.email || branch?.phone ? (
-          <p>{[branch.email && `Email: ${branch.email}`, branch.phone && `Phone: ${branch.phone}`].filter(Boolean).join("  ·  ")}</p>
-        ) : null}
+        <p className="letterhead-name">{text.name}</p>
+        {text.address ? <p>{text.address}</p> : null}
+        {text.contact ? <p>{text.contact}</p> : null}
       </div>
       <div className="letterhead-doc">
         <p className="letterhead-title">{title}</p>
@@ -60,11 +58,13 @@ export function CutLine() {
   );
 }
 
+export const OFFICE_SEAL = "Office seal";
+
 export function Signatures({ left = "Customer signature", right = "Authorised signatory" }) {
   return (
     <div className="signatures">
       <div>{left}</div>
-      <div>Office seal</div>
+      <div>{OFFICE_SEAL}</div>
       <div>{right}</div>
     </div>
   );
@@ -99,3 +99,24 @@ export function Fields({ rows }) {
     </dl>
   );
 }
+
+/**
+ * One printed copy, drawn from a plain description (see `loanSheet` / `entrySheet`), so the
+ * screen, the printout and the shared PDF (receiptCanvas.js) all show the same thing.
+ */
+export const Sheet = forwardRef(function Sheet({ sheet }, ref) {
+  return (
+    <article ref={ref} className="sheet" aria-label={`${sheet.copy} copy`}>
+      <Letterhead branch={sheet.letterhead} title={sheet.title} date={sheet.date} />
+      <Fields rows={sheet.fields} />
+      {sheet.total ? (
+        <div className="sheet-total">
+          <span>{sheet.total.label}</span>
+          <strong>{sheet.total.value}</strong>
+        </div>
+      ) : null}
+      {sheet.terms ? <Terms /> : null}
+      <Signatures {...sheet.signatures} />
+    </article>
+  );
+});

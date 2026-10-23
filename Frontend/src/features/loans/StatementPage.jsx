@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { loans } from "../../api/endpoints.js";
 import { useAsync, useDocumentTitle } from "../../hooks/useAsync.js";
@@ -9,18 +10,13 @@ import { Icon } from "../../ui/Icon.jsx";
 import { DataTable } from "../../ui/DataTable.jsx";
 import { ErrorState, SkeletonRows } from "../../ui/feedback.jsx";
 import { Card, Details, LoanStatus, PageHeader, Pill } from "../../ui/surfaces.jsx";
+import { LedgerCalculation } from "./LedgerCalculation.jsx";
 
 const RECEIPT_KINDS = new Set(["addColl", "disbursement", "writeoff"]);
 
-export default function StatementPage() {
-  const { loanNumber } = useParams();
-  const { data, error, reload } = useAsync((signal) => loans.get(loanNumber, { signal }), [loanNumber]);
-  useDocumentTitle(`Statement ${loanNumber}`);
-
-  if (error) return <div className="page narrow"><ErrorState error={error} onRetry={error.status === 404 ? undefined : reload} /></div>;
-  if (!data) return <div className="page"><SkeletonRows rows={8} label="Loading statement" /></div>;
-  const { loan, statements } = data;
-
+/** The ledger table; "Show calculation" adds how each entry was worked out (from the server). */
+export function LedgerCard({ loan, statements, initiallyShown = false }) {
+  const [shown, setShown] = useState(initiallyShown);
   const columns = [
     { key: "date", header: "Date", render: (s) => <span title={formatDateTime(s.at)}>{formatDay(s.date)}</span> },
     {
@@ -50,6 +46,30 @@ export default function StatementPage() {
         ) : null,
     },
   ];
+  return (
+    <Card title="Ledger"
+      actions={
+        <>
+          <span className="muted">Newest first</span>
+          <Button size="sm" icon="calculator" className="no-print" aria-pressed={shown} onClick={() => setShown((v) => !v)}>
+            Show calculation
+          </Button>
+        </>
+      }>
+      <DataTable columns={columns} rows={statements} rowKey={(s) => s.id} caption={`${statements.length} entries for loan ${loan.loan_number}`}
+        detail={shown ? (s) => <LedgerCalculation calculation={s.calculation} entry={s} /> : undefined} />
+    </Card>
+  );
+}
+
+export default function StatementPage() {
+  const { loanNumber } = useParams();
+  const { data, error, reload } = useAsync((signal) => loans.get(loanNumber, { signal }), [loanNumber]);
+  useDocumentTitle(`Statement ${loanNumber}`);
+
+  if (error) return <div className="page narrow"><ErrorState error={error} onRetry={error.status === 404 ? undefined : reload} /></div>;
+  if (!data) return <div className="page"><SkeletonRows rows={8} label="Loading statement" /></div>;
+  const { loan, statements } = data;
 
   return (
     <div className="page">
@@ -73,9 +93,7 @@ export default function StatementPage() {
             ]}
           />
         </Card>
-        <Card title="Ledger" actions={<span className="muted">Newest first</span>}>
-          <DataTable columns={columns} rows={statements} rowKey={(s) => s.id} caption={`${statements.length} entries for loan ${loan.loan_number}`} />
-        </Card>
+        <LedgerCard loan={loan} statements={statements} />
       </div>
     </div>
   );

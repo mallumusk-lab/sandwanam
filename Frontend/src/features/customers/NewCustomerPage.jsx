@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { branches as branchesApi, customers } from "../../api/endpoints.js";
 import { useAuth } from "../../auth/AuthContext.jsx";
@@ -19,6 +19,11 @@ export default function NewCustomerPage() {
   const [duplicate, setDuplicate] = useState(null);
   const [pending, setPending] = useState(false);
   const branchList = useAsync((signal) => (user.is_head_office ? branchesApi.list({ signal }) : Promise.resolve([])), [user.is_head_office]);
+  // Head office defaults to the branch picked in the top bar, else its own (head-office) branch.
+  useEffect(() => {
+    const office = branchList.data?.find((b) => b.is_head_office);
+    if (office) setForm((f) => (f.branch ? f : { ...f, branch: office.code }));
+  }, [branchList.data]);
 
   const set = (key) => (event) => setForm((f) => ({ ...f, [key]: event.target.value }));
 

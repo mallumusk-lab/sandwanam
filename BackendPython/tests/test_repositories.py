@@ -5,6 +5,7 @@ import asyncio
 import unittest
 from datetime import date
 from decimal import Decimal as D
+from pathlib import Path
 
 from app.domain import backup_codec
 from app.repositories import QueryArgumentError, Repos, check_arguments, like_pattern
@@ -125,8 +126,7 @@ class EveryRepositoryMethod(unittest.TestCase):
         run(r.loans.mark_closed("SAN1L1", NOW))
         run(r.loans.set_follow_up("SAN1L1", date(2025, 4, 1)))
         run(r.statements.latest("SAN1L1"))
-        run(r.statements.history("SAN1L1"))
-        run(r.statements.compounding_count("SAN1L1"))
+        run(r.statements.totals("SAN1L1"))
         run(r.statements.by_request_id(EVIL))
         run(r.statements.insert(loan_id=1, loan_number="SAN1L1", kind="addColl", at=NOW, amount_paid=D("1"),
                                 current_principal=D("0"), current_interest=D("1"), principal_balance=D("1"),
@@ -136,6 +136,24 @@ class EveryRepositoryMethod(unittest.TestCase):
         run(r.statements.get(1))
         lock_sql = next(sql for sql, _ in self.conn.calls if "FOR UPDATE OF l" in sql)
         self.assertIn("WHERE l.loan_number = $1", lock_sql)
+
+    def test_first_week_totals_come_from_the_whole_ledger(self):
+        """The window peak and interest already collected (first-7-days rule) are read by the
+        position queries and, for the locked write path, by statements.totals."""
+        r = self.repos
+        run(r.loans.get("SAN1L1"))
+        run(r.loans.for_customer(1))
+        run(r.loans.open_with_position("SAN"))
+        run(r.statements.totals("SAN1L1"))
+        get_sql, customer_sql, open_sql, totals_sql = [sql for sql, _ in self.conn.calls]
+        for sql in (get_sql, customer_sql, open_sql):
+            self.assertIn("cc.peak_principal", sql)
+            self.assertIn("cc.interest_collected", sql)
+            self.assertIn("MAX(s.principlebalance) AS peak_principal", sql)
+        for sql in (get_sql, totals_sql):
+            self.assertIn("COUNT(*) FILTER (WHERE s.transactiontype = 'compounding') AS compoundings", sql)
+            self.assertIn("SUM(s.currentinterest) FILTER (WHERE s.transactiontype = 'addColl')", sql)
+        self.assertIn("WHERE s.loan_number = $1", totals_sql)
 
     def test_reports(self):
         r = self.repos
@@ -149,6 +167,9 @@ class EveryRepositoryMethod(unittest.TestCase):
         run(r.reports.recent(None, 8))
         run(r.reports.loan_counts("SAN"))
         run(r.reports.transactions(None, lower, upper, EVIL, "addColl", 50, 0))
+        transactions = self.conn.calls[-1][0]
+        self.assertIn("l.date AS loan_date", transactions, "statement rows need the loan date (in_first_week)")
+        self.assertIn("s.created_at", transactions)
 
     def test_admin(self):
         r = self.repos
@@ -168,11 +189,6 @@ class EveryRepositoryMethod(unittest.TestCase):
             NOW,
         )
         run(r.backups.replace_business_data(backup_codec.decode(payload)))
-        run(r.backups.create_snapshot(kind="manual", created_by="u", payload=b"x", sha256="0" * 64))
-        run(r.backups.snapshots())
-        run(r.backups.snapshot(1))
-        run(r.backups.prune_snapshots("manual", 5))
-        run(r.backups.latest_snapshot_at("manual"))
         sqls = [sql for sql, _ in self.conn.calls]
         drops = [i for i, sql in enumerate(sqls) if "DROP CONSTRAINT" in sql]
         adds = [i for i, sql in enumerate(sqls) if "ADD CONSTRAINT" in sql]
@@ -181,11 +197,85 @@ class EveryRepositoryMethod(unittest.TestCase):
         self.assertLess(max(drops), min(adds))
         branch_update = next(sql for sql in sqls if "UPDATE role SET display_name" in sql)
         self.assertNotIn("permissions", branch_update, "a restore never re-grants features")
-        prune = next(sql for sql in sqls if "DELETE FROM backup_snapshots" in sql)
-        self.assertIn("kind = $1", prune, "snapshots are pruned per kind")
+        self.assertFalse(any("backup_snapshots" in sql for sql in sqls), "backups are never stored")
+        repositories = Path(__file__).resolve().parents[1] / "app" / "repositories"
+        for source in sorted(repositories.glob("*.py")):
+            self.assertNotIn("backup_snapshots", source.read_text("utf-8"), source.name)
+        self.assertEqual([name for name in dir(r.backups) if "snapshot" in name], [])
+        migration = (repositories.parents[1] / "migrations" / "005_cash_ledger.sql").read_text("utf-8")
+        self.assertIn("\nDROP TABLE IF EXISTS backup_snapshots;", migration, "005 removes the old snapshots table")
         truncate = next(sql for sql, _ in self.conn.calls if sql.startswith("TRUNCATE"))
         self.assertNotIn("role", truncate, "restores never touch accounts")
         self.assertNotIn("audit_logs", truncate)
+
+    def test_cash_ledger(self):
+        import inspect
+        from app.repositories.cash import CashRepo
+        r, day = self.repos, date(2025, 3, 10)
+        calls = {
+            "latest_day": [lambda: r.cash.latest_day(EVIL), lambda: r.cash.latest_day("SAN", day)],
+            "day_for_update": [lambda: r.cash.day_for_update(1)],
+            "days_since": [lambda: r.cash.days_since(EVIL, day)],
+            "entries_for_days": [lambda: r.cash.entries_for_days([1, 2]), lambda: r.cash.entries_for_days([])],
+            "entry": [lambda: r.cash.entry(1)],
+            "entry_by_request_id": [lambda: r.cash.entry_by_request_id(EVIL)],
+            "create_day": [lambda: r.cash.create_day(branch="SAN", day=day, carried_forward=D("0"),
+                                                     opening_counted=D("1"), opened_by=EVIL, opened_at=NOW,
+                                                     request_id="r")],
+            "add_entry": [lambda: r.cash.add_entry(day_id=1, direction="out", category="other", description=EVIL,
+                                                   reference=EVIL, amount=D("1"), request_id="r", created_by="u",
+                                                   created_at=NOW)],
+            "void_entry": [lambda: r.cash.void_entry(1, voided_by="u", reason=EVIL, at=NOW)],
+            "close_day": [lambda: r.cash.close_day(1, expected=D("1"), counted=D("1"), closed_by="u", at=NOW,
+                                                   automatically=False)],
+            "reopen_day": [lambda: r.cash.reopen_day(1)],
+            "open_days_before": [lambda: r.cash.open_days_before(day), lambda: r.cash.open_days_before(day, EVIL)],
+            "purge": [lambda: r.cash.purge(day)],
+            "recent_custom_descriptions": [lambda: r.cash.recent_custom_descriptions(EVIL, day, 20)],
+        }
+        public = {name for name, fn in inspect.getmembers(CashRepo, inspect.iscoroutinefunction)
+                  if not name.startswith("_")}
+        self.assertEqual(set(calls), public, "every CashRepo method is exercised here")
+        for name, makers in calls.items():
+            for make in makers:
+                with self.subTest(name):
+                    run(make())
+        sqls = [sql for sql, _ in self.conn.calls]
+        self.assertEqual(len(sqls), sum(len(m) for m in calls.values()) - 1, "no query for an empty id list")
+        lock = next(sql for sql in sqls if "FOR UPDATE" in sql)
+        self.assertIn("FROM cash_days d WHERE d.id = $1 FOR UPDATE", lock)
+        purge = next(sql for sql in sqls if "DELETE FROM cash_days" in sql)
+        self.assertIn("d.day < $1", purge)
+        self.assertIn("d.day < (SELECT MAX(l.day) FROM cash_days l WHERE l.branch_prefix = d.branch_prefix)", purge,
+                      "each branch's latest day is kept for the carry forward")
+        self.assertIn("ON CONFLICT (branch_prefix, day) DO NOTHING", next(s for s in sqls if "INSERT INTO cash_days" in s))
+        self.assertIn("ON CONFLICT (client_request_id) DO NOTHING",
+                      next(s for s in sqls if "INSERT INTO cash_entries" in s))
+        self.assertIn("voided_at IS NULL", next(s for s in sqls if s.lstrip().startswith("UPDATE cash_entries")))
+        self.assertTrue(all("loan" not in s and "statement" not in s for s in sqls), "independent of loans")
+
+    def test_cash_tables_are_backed_up_and_restored_children_last(self):
+        r = self.repos
+        payload = backup_codec.encode(
+            {"customers": [], "loan_data": [], "statement": [],
+             "cash_days": [{"id": 1, "branch_prefix": "SAN", "day": date(2025, 3, 10), "carried_forward": D("0"),
+                            "opening_counted": D("1"), "opened_by": EVIL, "opened_at": NOW,
+                            "closed_automatically": False}],
+             "cash_entries": [{"id": 1, "day_id": 1, "direction": "out", "category": "other", "description": EVIL,
+                               "amount": D("1"), "created_by": "u", "created_at": NOW}]},
+            NOW,
+        )
+        run(r.backups.export_rows())
+        run(r.backups.replace_business_data(backup_codec.decode(payload)))
+        sqls = [sql for sql, _ in self.conn.calls]
+        self.assertIn("SELECT id, branch_prefix, day,", next(s for s in sqls if "FROM cash_days ORDER BY id" in s))
+        self.assertTrue(any("FROM cash_entries ORDER BY id" in s for s in sqls))
+        truncate = next(s for s in sqls if s.startswith("TRUNCATE"))
+        self.assertIn("cash_entries, cash_days", truncate)
+        inserts = [s.split("(")[0].split()[-1] for s in sqls if s.startswith("INSERT INTO") and "VALUES ($1" in s]
+        self.assertLess(inserts.index("cash_days"), inserts.index("cash_entries"), "parents first")
+        for table in ("cash_days", "cash_entries"):
+            self.assertTrue(any(f"pg_get_serial_sequence('{table}', 'id')" in s for s in sqls), table)
 
 
 if __name__ == "__main__":

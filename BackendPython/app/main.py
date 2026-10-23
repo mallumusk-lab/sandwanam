@@ -11,7 +11,7 @@ from . import logs
 from .config import settings
 from .errors import AppError
 from .middleware import ApiPrefixMiddleware, OriginGuardMiddleware, PayloadTooLarge, RequestContextMiddleware
-from .routers import admin, auth, business, insights, ops
+from .routers import admin, auth, business, cash, insights, ops
 
 
 def _error(status: int, code: str, message: str, details: dict | None = None) -> JSONResponse:
@@ -34,7 +34,7 @@ def create_fastapi() -> FastAPI:
         redoc_url=None,
         openapi_url="/openapi.json" if config.docs_enabled else None,
     )
-    for module in (auth, business, insights, admin, ops):
+    for module in (auth, business, insights, cash, admin, ops):
         api.include_router(module.router)
 
     @api.exception_handler(AppError)

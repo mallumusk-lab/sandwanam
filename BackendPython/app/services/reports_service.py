@@ -58,7 +58,7 @@ async def portfolio(repos, actor: Actor, branch: str | None, now: datetime) -> d
     principal = interest = weight = ZERO
     aging: dict[str, int] = {label: 0 for _, _, label in reports.AGING_BUCKETS}
     by_branch: dict[str, dict] = defaultdict(lambda: {"loans": 0, "principal": ZERO, "interest": ZERO})
-    overdue, inactive, loans = [], [], []
+    overdue, follow_ups, inactive, loans = [], [], [], []
     for row in rows:
         q = live_quote(row, today)
         if q is None:
@@ -74,15 +74,18 @@ async def portfolio(repos, actor: Actor, branch: str | None, now: datetime) -> d
         branch_totals["loans"] += 1
         branch_totals["principal"] += q.principal
         branch_totals["interest"] += q.interest
-        due = dates.add_months(terms_of(row).start_date, int(row.get("tenure") or 0))
+        start = terms_of(row).start_date
+        due = reports.overdue_from(start)
         follow_up = row.get("follow_up_date")
+        follow_up_date, follow_up_set = serialize.follow_up(row)
+        follow_up_days = (date.fromisoformat(follow_up_date) - today).days if follow_up_date else None
         entry = {
             "loan_number": row["loan_number"],
             "customer_id": row["customerid"],
             "customer_name": row["customername"],
             "phone": row["phone"],
             "branch": row["branch_prefix"],
-            "loan_date": terms_of(row).start_date.isoformat(),
+            "loan_date": start.isoformat(),
             "due_date": due.isoformat(),
             "last_payment": last_payment.isoformat(),
             "days_since_payment": idle_days,
@@ -91,16 +94,21 @@ async def portfolio(repos, actor: Actor, branch: str | None, now: datetime) -> d
             "total": serialize.money(q.total),
             "net_weight": serialize.money(net),
             "ltv": _ltv(q.total, net, rate),
-            "follow_up_date": follow_up.isoformat() if follow_up else None,
+            "follow_up_date": follow_up_date,
+            "follow_up_set": follow_up_set,
+            "follow_up_days": follow_up_days,
         }
         loans.append(entry)
-        if due < today:
+        if today > due:
             overdue.append({**entry, "days_overdue": (today - due).days,
                             "followed_up": bool(follow_up and follow_up > today)})
+        elif follow_up_days is not None and follow_up_days <= reports.FOLLOW_UP_NOTICE_DAYS:
+            follow_ups.append(entry)
         if idle_days > INACTIVE_AFTER_DAYS:
             inactive.append(entry)
 
     overdue.sort(key=lambda e: (e["followed_up"], -e["days_overdue"]))
+    follow_ups.sort(key=lambda e: (e["follow_up_date"], e["loan_number"]))
     inactive.sort(key=lambda e: -e["days_since_payment"])
     loans.sort(key=lambda e: -Decimal(e["total"]))
     names = {b["branch_prefix"]: b.get("display_name") or b["username"] for b in await repos.users.branches()}
@@ -120,6 +128,8 @@ async def portfolio(repos, actor: Actor, branch: str | None, now: datetime) -> d
             for code, t in sorted(by_branch.items())
         ],
         "overdue": overdue,
+        "follow_ups": follow_ups,
+        "follow_up_notice_days": reports.FOLLOW_UP_NOTICE_DAYS,
         "inactive": inactive,
         "loans": loans,
     }

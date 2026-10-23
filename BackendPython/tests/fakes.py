@@ -28,8 +28,9 @@ class State:
         self.statements: list[dict] = []
         self.audit: list[dict] = []
         self.settings: dict[str, dict] = {}
-        self.snapshots: list[dict] = []
-        self.next_ids = {"customer": 1, "loan": 1, "statement": 1, "snapshot": 1}
+        self.cash_days: dict[int, dict] = {}
+        self.cash_entries: list[dict] = []
+        self.next_ids = {"customer": 1, "loan": 1, "statement": 1, "cash_day": 1, "cash_entry": 1}
 
 
 class Transaction:
@@ -200,6 +201,17 @@ class Customers(_Part):
         self.s.customers[customer_id]["loanstatus"] = "1" if open_ else "0"
 
 
+def _totals(entries):
+    """Mirror of repositories.loans.LEDGER_TOTALS."""
+    balances = [s["principlebalance"] for s in entries if s["principlebalance"] is not None]
+    return {
+        "compoundings": sum(1 for s in entries if s["transactiontype"] == "compounding"),
+        "peak_principal": max(balances) if balances else None,
+        "interest_collected": sum((s["currentinterest"] or Decimal("0") for s in entries
+                                   if s["transactiontype"] == "addColl"), Decimal("0")),
+    }
+
+
 class Loans(_Part):
     def _with_customer(self, loan):
         customer = self.s.customers.get(loan["customerid"], {})
@@ -213,7 +225,7 @@ class Loans(_Part):
                        last_interest=entries[-1]["interestbalance"])
         else:
             row.update(last_entry_at=None, last_principal=None, last_interest=None)
-        row["compoundings"] = sum(1 for s in entries if s["transactiontype"] == "compounding")
+        row.update(_totals(entries))
         payments = [s["date"] for s in entries if s["transactiontype"] == "addColl" and s["amountpaid"] > 0]
         row["last_payment_at"] = max(payments) if payments else None
         return row
@@ -271,12 +283,8 @@ class Statements(_Part):
         rows = self._for(loan_number)
         return dict(rows[-1]) if rows else None
 
-    async def history(self, loan_number):
-        return [dict(date=s["date"], transactiontype=s["transactiontype"], accrued_days=s["accrued_days"])
-                for s in self._for(loan_number)]
-
-    async def compounding_count(self, loan_number):
-        return sum(1 for s in self._for(loan_number) if s["transactiontype"] == "compounding")
+    async def totals(self, loan_number):
+        return _totals(self._for(loan_number))
 
     async def by_request_id(self, request_id):
         return next(({"statementid": s["statementid"], "loan_number": s["loan_number"]}
@@ -309,6 +317,16 @@ class Audit(_Part):
     async def log(self, **entry):
         self.s.audit.append(entry)
 
+    async def page(self, term, limit, offset):
+        rows = [dict(log_id=i + 1, timestamp=utc(2025, 1, 1), username=e["username"], action=e["action"],
+                     entity_type=e["entity_type"], entity_id=e["entity_id"], details=e.get("details"), ip=e.get("ip"))
+                for i, e in enumerate(self.s.audit)]
+        if term:
+            rows = [r for r in rows if any(term.lower() in str(r[k] or "").lower()
+                                           for k in ("username", "action", "entity_id"))]
+        rows.reverse()
+        return rows[offset:offset + limit], len(rows)
+
 
 class Settings(_Part):
     async def get(self, key):
@@ -316,6 +334,115 @@ class Settings(_Part):
 
     async def put(self, key, value, updated_by):
         self.s.settings[key] = {"value": value, "updated_at": utc(2025, 1, 1), "updated_by": updated_by}
+
+
+class Cash(_Part):
+    """Mirror of repositories.cash.CashRepo, including its unique keys and the purge rule."""
+
+    def _entries(self, day_ids):
+        rows = [e for e in self.s.cash_entries if e["day_id"] in set(day_ids)]
+        return [dict(e) for e in sorted(rows, key=lambda e: (e["created_at"], e["id"]))]
+
+    async def latest_day(self, branch, before=None):
+        days = [d for d in self.s.cash_days.values()
+                if d["branch_prefix"] == branch and (before is None or d["day"] < before)]
+        return dict(max(days, key=lambda d: d["day"])) if days else None
+
+    async def day_for_update(self, day_id):
+        day = self.s.cash_days.get(day_id)
+        return dict(day) if day else None
+
+    async def days_since(self, branch, since):
+        days = [d for d in self.s.cash_days.values() if d["branch_prefix"] == branch and d["day"] >= since]
+        return [dict(d) for d in sorted(days, key=lambda d: d["day"], reverse=True)]
+
+    async def entries_for_days(self, day_ids):
+        return self._entries(day_ids)
+
+    async def entry(self, entry_id):
+        row = next((e for e in self.s.cash_entries if e["id"] == entry_id), None)
+        if row is None:
+            return None
+        return dict(row, branch_prefix=self.s.cash_days[row["day_id"]]["branch_prefix"])
+
+    async def entry_by_request_id(self, request_id):
+        return next(({"id": e["id"], "day_id": e["day_id"]} for e in self.s.cash_entries
+                     if e["client_request_id"] == request_id), None)
+
+    async def create_day(self, *, branch, day, carried_forward, opening_counted, opened_by, opened_at, request_id):
+        if not any(u.get("branch_prefix") == branch for u in self.s.users.values()):
+            raise AssertionError("cash_days.branch_prefix must reference role(branch_prefix)")
+        if any(d["branch_prefix"] == branch and d["day"] == day for d in self.s.cash_days.values()):
+            return None  # ON CONFLICT (branch_prefix, day) DO NOTHING
+        did = self.s.next_ids["cash_day"]
+        self.s.next_ids["cash_day"] += 1
+        self.s.cash_days[did] = dict(
+            id=did, branch_prefix=branch, day=day, carried_forward=carried_forward, opening_counted=opening_counted,
+            opened_by=opened_by, opened_at=opened_at, client_request_id=request_id, closing_expected=None,
+            closing_counted=None, closed_by=None, closed_at=None, closed_automatically=False,
+        )
+        return did
+
+    async def add_entry(self, *, day_id, direction, category, description, reference, amount, request_id,
+                        created_by, created_at):
+        if day_id not in self.s.cash_days:
+            raise AssertionError("cash_entries.day_id must reference cash_days(id)")
+        if amount <= 0 or direction not in ("in", "out"):
+            raise AssertionError("violates cash_entries_values_check")
+        if any(e["client_request_id"] == request_id for e in self.s.cash_entries):
+            return None  # ON CONFLICT (client_request_id) DO NOTHING
+        eid = self.s.next_ids["cash_entry"]
+        self.s.next_ids["cash_entry"] += 1
+        self.s.cash_entries.append(dict(
+            id=eid, day_id=day_id, direction=direction, category=category, description=description,
+            reference=reference, amount=amount, client_request_id=request_id, created_by=created_by,
+            created_at=created_at, voided_at=None, voided_by=None, void_reason=None,
+        ))
+        return eid
+
+    async def void_entry(self, entry_id, *, voided_by, reason, at):
+        row = next((e for e in self.s.cash_entries if e["id"] == entry_id and e["voided_at"] is None), None)
+        if row is None:
+            return False
+        row.update(voided_at=at, voided_by=voided_by, void_reason=reason)
+        return True
+
+    async def close_day(self, day_id, *, expected, counted, closed_by, at, automatically):
+        day = self.s.cash_days[day_id]
+        if day["closed_at"] is None:
+            day.update(closing_expected=expected, closing_counted=counted, closed_by=closed_by, closed_at=at,
+                       closed_automatically=automatically)
+
+    async def reopen_day(self, day_id):
+        self.s.cash_days[day_id].update(closing_expected=None, closing_counted=None, closed_by=None, closed_at=None,
+                                        closed_automatically=False)
+
+    async def open_days_before(self, today, branch=None):
+        days = [d for d in self.s.cash_days.values() if d["closed_at"] is None and d["day"] < today
+                and (branch is None or d["branch_prefix"] == branch)]
+        return [dict(d) for d in sorted(days, key=lambda d: (d["day"], d["id"]))]
+
+    async def purge(self, cutoff):
+        latest = {}
+        for d in self.s.cash_days.values():
+            latest[d["branch_prefix"]] = max(latest.get(d["branch_prefix"], d["day"]), d["day"])
+        gone = {i for i, d in self.s.cash_days.items() if d["day"] < cutoff and d["day"] < latest[d["branch_prefix"]]}
+        for day_id in gone:
+            del self.s.cash_days[day_id]
+        self.s.cash_entries = [e for e in self.s.cash_entries if e["day_id"] not in gone]  # ON DELETE CASCADE
+        return len(gone)
+
+    async def recent_custom_descriptions(self, branch, since, limit):
+        counts: dict[str, list] = {}
+        for e in self.s.cash_entries:
+            day = self.s.cash_days[e["day_id"]]
+            if (day["branch_prefix"] == branch and day["day"] >= since and e["category"] == "other"
+                    and e["description"] and e["voided_at"] is None):
+                seen = counts.setdefault(e["description"], [0, e["created_at"]])
+                seen[0] += 1
+                seen[1] = max(seen[1], e["created_at"])
+        ranked = sorted(counts.items(), key=lambda kv: (-kv[1][0], -kv[1][1].timestamp(), kv[0]))
+        return [text for text, _ in ranked[:limit]]
 
 
 class MemoryRepos:
@@ -329,12 +456,14 @@ class MemoryRepos:
         self.statements = Statements(self)
         self.audit = Audit(self)
         self.settings = Settings(self)
+        self.cash = Cash(self)
 
     def transaction(self):
         return Transaction(self)
 
     # ── fixtures ────────────────────────────────────────────────────────────────
-    def add_account(self, username, password, account_type, prefix=None, permissions="newcustomer,userlist,form1,analytics,report,history",
+    def add_account(self, username, password, account_type, prefix=None,
+                    permissions="newcustomer,userlist,form1,analytics,report,history,cashbook",  # 005 grants cashbook
                     **extra):
         self.state.users[username] = dict(
             username=username, password=passwords.hash_password(password, iterations=1000) if password else None,

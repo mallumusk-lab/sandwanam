@@ -1,25 +1,27 @@
 """History import: enter a loan that started before this system, with its past entries.
 
 Preview is a pure simulation (no database writes). Commit replays the same simulation
-inside one transaction, so what was previewed is exactly what gets stored.
+inside one transaction, so what was previewed is exactly what gets stored. A loan that was
+already settled ends with a close entry: it is closed with the live closing rules (first-7-days
+minimum, write-off only when confirmed) on that date, exactly as if closed live that day.
 """
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
-from datetime import date, datetime
+from dataclasses import dataclass, replace
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 from typing import Sequence
 
 from ..domain import dates, ledger, particulars, validation
 from ..domain.ledger import ImportEvent, LoanTerms
-from ..domain.money import AmountError, parse_amount
+from ..domain.money import ZERO, AmountError, parse_amount
 from ..errors import Conflict, Invalid, NotFound
 from . import serialize
 from .context import Actor, ensure_visible
 from .customers_service import NewCustomer
 from .customers_service import create as create_customer
-from .loans_service import stamps_for
+from .loans_service import CLOSING_PAIR_GAP, stamps_for
 
 MAX_EVENTS = 500
 
@@ -39,7 +41,8 @@ class HistoryLoan:
 class HistoryEntry:
     on: date
     kind: str
-    amount: str
+    amount: str  # for a close: the amount received (may be zero)
+    write_off_remaining: bool = False  # close only
 
 
 @dataclass(frozen=True)
@@ -65,12 +68,47 @@ def _validate(loan: HistoryLoan, entries: Sequence[HistoryEntry]) -> Validated:
             raise Invalid(f"A history import can have at most {MAX_EVENTS} entries.", code="too_many_entries")
         events = []
         for index, entry in enumerate(entries, start=1):
-            if entry.kind not in (ledger.COLLECTION, ledger.TOP_UP):
+            if entry.kind not in (ledger.COLLECTION, ledger.TOP_UP, ledger.CLOSING):
                 raise Invalid(f"Entry {index} has an unknown type.", code="invalid_entry")
-            events.append(ImportEvent(entry.on, entry.kind, parse_amount(entry.amount, field=f"Entry {index} amount")))
+            closing = entry.kind == ledger.CLOSING
+            amount = parse_amount(entry.amount, field=f"Entry {index} amount", allow_zero=closing)
+            events.append(ImportEvent(entry.on, entry.kind, amount, closing and bool(entry.write_off_remaining)))
+        _check_close_is_last(events)
     except (particulars.ItemsError, validation.ValidationError, AmountError) as exc:
         raise Invalid(str(exc), code="invalid_import", details={"field": getattr(exc, "field", "loan")}) from exc
     return Validated(items, gross, deduction, net, principal, rate, tenure, events)
+
+
+def _check_close_is_last(events: Sequence[ImportEvent]) -> None:
+    closes = [i for i, e in enumerate(events) if e.kind == ledger.CLOSING]
+    if len(closes) > 1:
+        raise Invalid("A loan can be closed only once. Remove the extra close entry.", code="close_twice")
+    if closes:
+        close = events[closes[0]]
+        if closes[0] != len(events) - 1 or any(e.on > close.on for e in events):
+            raise Invalid("The loan closing must be the last entry. Remove or move the entries after it.",
+                          code="close_not_last")
+
+
+def _closing(v: Validated) -> ImportEvent | None:
+    return next((e for e in v.events if e.kind == ledger.CLOSING), None)
+
+
+def _stamps(simulated: Sequence[ledger.Entry], closing: ImportEvent | None, now: datetime) -> list[datetime]:
+    """Storage stamps for the imported rows. Past entries on one day sit 1 µs apart at IST noon,
+    so the close's own rows (its payment, if any, and its write-off) start more than
+    CLOSING_PAIR_GAP after the entry before them: a same-day earlier payment must not look like
+    the closing payment on its receipt (receipts_service.for_statement)."""
+    at_values = stamps_for(simulated, None, now)
+    if closing is None:
+        return at_values
+    own = (1 if closing.amount > ZERO else 0) + (1 if simulated[-1].kind == ledger.WRITE_OFF else 0)
+    first = len(simulated) - own
+    if own == 0 or first < 1 or at_values[first] - at_values[first - 1] > CLOSING_PAIR_GAP:
+        return at_values
+    step = timedelta(microseconds=1)
+    start = at_values[first - 1] + CLOSING_PAIR_GAP + step
+    return at_values[:first] + [start + step * i for i in range(own)]
 
 
 def _simulate(v: Validated, loan_date: date, today: date) -> list[ledger.Entry]:
@@ -91,18 +129,30 @@ def _entry_view(entry: ledger.Entry, index: int) -> dict:
         "principal_balance": serialize.money(entry.principal_balance),
         "interest_balance": serialize.money(entry.interest_balance),
         "accrued_days": entry.accrued_days,
+        "writeoff_principal": serialize.money(entry.writeoff_principal),  # None except on a write-off row
+        "writeoff_interest": serialize.money(entry.writeoff_interest),
     }
 
 
 async def preview(actor: Actor, loan: HistoryLoan, entries: Sequence[HistoryEntry], now: datetime) -> dict:
     actor.require("history")
     validated = _validate(loan, entries)
+    closing = _closing(validated)
+    if closing is not None and not closing.write_off_remaining:
+        # Show the rows as if the write-off were confirmed, so the remainder can be offered for
+        # confirmation; commit still refuses it until write_off_remaining is set.
+        validated = replace(validated, events=[replace(e, write_off_remaining=True) if e is closing else e
+                                               for e in validated.events])
     simulated = _simulate(validated, loan.loan_date, dates.business_date(now))
     final = simulated[-1]
+    written_off = [e for e in simulated if e.kind == ledger.WRITE_OFF]
+    remaining = sum(((e.writeoff_principal or ZERO) + (e.writeoff_interest or ZERO) for e in written_off), ZERO)
     return {
         "entries": [_entry_view(e, i) for i, e in enumerate(simulated)],
         "principal_balance": serialize.money(final.principal_balance),
         "interest_balance": serialize.money(final.interest_balance),
+        "closes_on": closing.on.isoformat() if closing is not None else None,
+        "remaining_after_close": serialize.money(remaining) if written_off else None,
     }
 
 
@@ -170,7 +220,8 @@ async def commit(
         else:
             raise Conflict("Could not allocate a loan number. Try again.", code="loan_number_unavailable")
 
-        at_values = stamps_for(simulated, None, now)
+        closing = _closing(validated)
+        at_values = _stamps(simulated, closing, now)
         row = await repos.loans.insert(
             customer_id=customer["customerid"], loan_number=loan_number,
             items_json=json.dumps([i.as_dict() for i in validated.items]),
@@ -186,14 +237,19 @@ async def commit(
                 amount_paid=entry.amount_paid, current_principal=entry.current_principal,
                 current_interest=entry.current_interest, principal_balance=entry.principal_balance,
                 interest_balance=entry.interest_balance, accrued_days=entry.accrued_days,
-                writeoff_principal=None, writeoff_interest=None, created_by=actor.username,
-                request_id=request_id if index == 0 else None,
+                writeoff_principal=entry.writeoff_principal, writeoff_interest=entry.writeoff_interest,
+                created_by=actor.username, request_id=request_id if index == 0 else None,
             )
         await repos.loans.update_cache(loan_number, final.principal_balance, final.interest_balance)
+        if closing is not None:  # as loans_service.close: closed at the closing entry's stamp
+            closed_at = at_values[-1] if final.on == closing.on else dates.business_datetime(closing.on, now)
+            await repos.loans.mark_closed(loan_number, closed_at)
         await repos.customers.refresh_loan_status(customer["customerid"])
+        closed_note = f", closed on {closing.on}" if closing is not None else ""
         await repos.audit.log(
             username=actor.username, action="IMPORT_HISTORY", entity_type="LOAN", entity_id=loan_number,
-            details=f"Imported loan dated {loan.loan_date} with {len(entries)} past entr{'y' if len(entries) == 1 else 'ies'}",
+            details=f"Imported loan dated {loan.loan_date} with {len(entries)} past entr{'y' if len(entries) == 1 else 'ies'}"
+                    f"{closed_note}",
             ip=(context or {}).get("ip"), request_id=(context or {}).get("request_id"),
         )
     return {"loan_number": loan_number, "customer_id": customer["customerid"], "replayed": False}

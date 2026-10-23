@@ -68,20 +68,22 @@ export default function CalculatorPage() {
                 result.atMaturity.compoundings ? { label: "Compounded into principal", value: formatINR(subtract(result.atMaturity.principal, result.principal)) } : null,
                 { label: "Total to repay at the end of the tenure", value: formatINR(result.atMaturity.total), total: true },
               ]} />
-              <table className="table">
-                <caption>Amount due if the loan is closed after</caption>
-                <thead><tr><th scope="col">After</th><th scope="col">Date</th><th scope="col" className="num">Interest</th><th scope="col" className="num">Total due</th></tr></thead>
-                <tbody>
-                  {result.schedule.map((row) => (
-                    <tr key={row.months}>
-                      <th scope="row">{row.months} month{row.months === 1 ? "" : "s"}</th>
-                      <td>{formatDay(row.date)}</td>
-                      <td className="num">{formatINR(row.totalInterest)}</td>
-                      <td className="num">{formatINR(row.total)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+              <div className="table-wrap">
+                <table className="table table-stack">
+                  <caption>Amount due if the loan is closed after</caption>
+                  <thead><tr><th scope="col">After</th><th scope="col">Date</th><th scope="col" className="num">Interest</th><th scope="col" className="num">Total due</th></tr></thead>
+                  <tbody>
+                    {result.schedule.map((row) => (
+                      <tr key={row.months}>
+                        <th scope="row" data-label="After">{row.months} month{row.months === 1 ? "" : "s"}</th>
+                        <td data-label="Date">{formatDay(row.date)}</td>
+                        <td className="num" data-label="Interest">{formatINR(row.totalInterest)}</td>
+                        <td className="num" data-label="Total due">{formatINR(row.total)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
               <Banner tone="info">Estimate only, assuming no payments. Days are counted including the loan date, and interest compounds once a year.</Banner>
             </div>
           ) : (
