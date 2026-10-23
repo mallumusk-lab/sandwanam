@@ -115,6 +115,168 @@ class Config(unittest.TestCase):
     def test_plain_http_development_cookie(self):
         self.assertEqual(load_settings({"COOKIE_SECURE": "false"}).cookie_name, "sid")
 
+    def test_mail_settings_are_optional_and_never_fatal(self):
+        bare = load_settings({"VERCEL_ENV": "production", "DATABASE_URL": "postgres://u@h/db", "CRON_SECRET": self.SECRET})
+        self.assertEqual(bare.mail_missing()[:2], ("SMTP_HOST", "SMTP_FROM (the sender address)"))
+        self.assertIn("BACKUP_ZIP_PASSWORD (12 to 128 characters)", bare.mail_missing())
+        bad = load_settings({"SMTP_HOST": "smtp.example.in", "SMTP_PORT": "abc", "SMTP_FROM": "a,b@x.co",
+                             "SMTP_USERNAME": "u", "BACKUP_ZIP_PASSWORD": "short"})
+        self.assertEqual(bad.mail_missing(), ("SMTP_PORT (a port number such as 587)", "SMTP_PASSWORD",
+                                              "SMTP_FROM (the sender address)",
+                                              "BACKUP_ZIP_PASSWORD (12 to 128 characters)"))
+        ready = load_settings(MAIL_ENV)
+        self.assertEqual(ready.mail_missing(), ())
+        self.assertEqual((ready.smtp_port, ready.smtp_from), (587, "desk@example.in"))
+        self.assertEqual(load_settings(dict(MAIL_ENV, SMTP_FROM="")).smtp_from, "desk@example.in",
+                         "the login is used as sender when it is an address")
+        text = repr(ready)
+        self.assertNotIn(MAIL_ENV["SMTP_PASSWORD"], text)
+        self.assertNotIn(MAIL_ENV["BACKUP_ZIP_PASSWORD"], text)
+
+
+MAIL_ENV = {"SMTP_HOST": "smtp.example.in", "SMTP_USERNAME": "desk@example.in", "SMTP_PASSWORD": "smtp-secret-pw",
+            "SMTP_FROM": "desk@example.in", "BACKUP_ZIP_PASSWORD": "zip-secret-password-1"}
+
+
+class FakeSMTP:
+    """Stands in for smtplib.SMTP / SMTP_SSL: records every call, never opens a socket."""
+
+    instances: list = []
+
+    def __init__(self, host, port, *, local_hostname=None, timeout=None, context=None, starttls=True,
+                 fail_starttls=False):
+        self.calls = [("connect", host, port, local_hostname, timeout, context is not None)]
+        self.offers_starttls, self.fail_starttls = starttls, fail_starttls
+        FakeSMTP.instances.append(self)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        self.calls.append(("quit",))
+        return False
+
+    def ehlo(self):
+        self.calls.append(("ehlo",))
+
+    def has_extn(self, name):
+        return name == "starttls" and self.offers_starttls
+
+    def starttls(self, *, context=None):
+        if self.fail_starttls:
+            import ssl
+            raise ssl.SSLError("handshake failed")
+        self.calls.append(("starttls", context is not None))
+
+    def login(self, user, password):
+        self.calls.append(("login", user))
+
+    def send_message(self, message, from_addr=None, to_addrs=None):
+        self.calls.append(("send", from_addr, tuple(to_addrs)))
+        self.message = message
+        return {}
+
+    def names(self):
+        return [call[0] for call in self.calls]
+
+
+def fake_smtp(**options):
+    return lambda *args, **kwargs: FakeSMTP(*args, **kwargs, **options)
+
+
+class Mailer(unittest.TestCase):
+    def mailer(self, port=587, **options):
+        from app.infra import mailer
+
+        FakeSMTP.instances = []
+        settings = load_settings(dict(MAIL_ENV, SMTP_PORT=str(port)))
+        built, missing = mailer.from_settings(settings, smtp_class=fake_smtp(**options),
+                                              smtp_ssl_class=fake_smtp(**options))
+        self.assertEqual(missing, ())
+        return built
+
+    def send(self, mailer, to="backups@example.in"):
+        asyncio.run(mailer.send(to=to, subject="Gold Loan Desk nightly backup · taken 20 Oct 2025, 00:01 IST",
+                                text="Attached.", attachment=("backup.zip", b"PK\x03\x04data")))
+        return FakeSMTP.instances[-1]
+
+    def test_starttls_comes_before_login_and_send(self):
+        server = self.send(self.mailer())
+        self.assertEqual(server.names(), ["connect", "ehlo", "starttls", "ehlo", "login", "send", "quit"])
+        connect = server.calls[0]
+        self.assertEqual(connect[1:5], ("smtp.example.in", 587, "example.in", 20.0), "explicit EHLO name, 20 s timeout")
+        self.assertEqual(server.calls[2], ("starttls", True), "verified TLS context")
+        self.assertEqual(server.calls[5], ("send", "desk@example.in", ("backups@example.in",)))
+        message = server.message
+        self.assertTrue(message["Message-ID"].endswith("@example.in>"))
+        self.assertEqual(message["To"], "backups@example.in")
+        attachment = next(message.iter_attachments())
+        self.assertEqual((attachment.get_filename(), attachment.get_content_type()), ("backup.zip", "application/zip"))
+        self.assertEqual(attachment.get_content(), b"PK\x03\x04data")
+
+    def test_port_465_uses_tls_from_the_start(self):
+        server = self.send(self.mailer(port=465))
+        self.assertEqual(server.names(), ["connect", "login", "send", "quit"])
+        self.assertTrue(server.calls[0][5], "SMTP_SSL gets a verified context")
+
+    def test_no_encryption_means_nothing_is_sent(self):
+        from app.infra.mailer import MailError
+
+        for options in ({"starttls": False}, {"fail_starttls": True}):
+            with self.subTest(options):
+                mailer = self.mailer(**options)
+                with self.assertRaises(MailError) as caught:
+                    self.send(mailer)
+                server = FakeSMTP.instances[-1]
+                self.assertNotIn("login", server.names())
+                self.assertNotIn("send", server.names())
+                self.assertIn("nothing was sent", caught.exception.public_message)
+
+    def test_recipients_are_exactly_one_checked_address(self):
+        from app.infra.mailer import MailError
+
+        mailer = self.mailer()
+        for bad in ("a@x.co, b@y.co", "x@y.co\r\nBcc: z@evil.example", "Name <a@x.co>"):
+            with self.subTest(bad), self.assertRaises(MailError):
+                self.send(mailer, to=bad)
+        self.assertEqual(FakeSMTP.instances, [], "an invalid address never opens a connection")
+
+    def test_errors_and_repr_never_show_secrets(self):
+        import smtplib
+
+        from app.infra import mailer as mailer_module
+
+        built = self.mailer()
+        for text in (repr(built), repr(built.config)):
+            self.assertNotIn(MAIL_ENV["SMTP_PASSWORD"], text)
+            self.assertNotIn(MAIL_ENV["BACKUP_ZIP_PASSWORD"], text)
+
+        def refusing(*args, **kwargs):
+            server = FakeSMTP(*args, **kwargs)
+            server.send_message = lambda *a, **k: (_ for _ in ()).throw(
+                smtplib.SMTPRecipientsRefused({"backups@example.in": (550, b"no such user")}))
+            return server
+
+        built = mailer_module.BackupMailer(built.config, "zip-secret-password-1", smtp_class=refusing)
+        with self.assertRaises(mailer_module.MailError) as caught:
+            self.send(built)
+        self.assertNotIn("backups@example.in", caught.exception.public_message)
+        self.assertIsNone(caught.exception.__cause__)
+
+    def test_not_configured_lists_what_is_missing(self):
+        from app.infra import aeszip, mailer
+
+        built, missing = mailer.from_settings(load_settings({}))
+        self.assertIsNone(built)
+        self.assertIn("SMTP_HOST", missing)
+        original = aeszip.available
+        aeszip.available = lambda: False
+        try:
+            built, missing = mailer.from_settings(load_settings(MAIL_ENV))
+        finally:
+            aeszip.available = original
+        self.assertEqual((built, missing), (None, ("pyzipper is not installed",)))
+
 
 if __name__ == "__main__":
     unittest.main()

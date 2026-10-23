@@ -13,6 +13,22 @@ export function entryLabel(kind) {
   return ENTRY_LABELS[kind] ?? kind ?? "Entry";
 }
 
+// How the server worked out an entry's interest ("Show calculation" on the statement).
+export const CALCULATION_LABELS = {
+  opening: "Loan opened",
+  first_week: "First 7 days: payment goes to principal, no daily interest",
+  first_week_settlement: "7 days' interest on the highest principal, then daily",
+  inclusive: "Daily interest, both days counted",
+  compounding: "Yearly compounding, exact days",
+  writeoff: "Closed with a write-off",
+  legacy: "Earlier system",
+  as_recorded: "As recorded",
+};
+
+export function calculationLabel(method) {
+  return CALCULATION_LABELS[method] ?? CALCULATION_LABELS.as_recorded;
+}
+
 /** The amount that best describes an entry in lists and receipts. */
 export function entryAmount(entry) {
   switch (entry.kind) {

@@ -3,10 +3,17 @@
 Every operation takes the loan terms and the current position (the balances recorded on
 the latest ledger entry) and returns the entries to append. Nothing here touches the
 database, so the same code serves live postings, display quotes and history imports.
+
+First 7 days (W = loan date + 6, approved 2026-10): no daily interest is recorded in days
+1-7. A payment then reduces principal by its full amount and a top-up adds principal; the
+highest principal reached in those days is the window peak. Days 1-7 are charged as 7 days'
+interest on the peak, either when the loan closes inside the window or by the first event
+after day 7 (payment, top-up, closing or compounding), which also charges the days after
+day 7 on the current principal, rounded once. Inclusive counting resumes from that entry.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date, timedelta
 from decimal import Decimal
 from typing import Iterable, Sequence
@@ -16,7 +23,6 @@ from .interest import (
     COMPOUNDING_INTERVAL_DAYS,
     PeriodEnd,
     accrual_days,
-    closing_days,
     effective_rate,
     interest_for,
 )
@@ -53,12 +59,20 @@ class LoanTerms:
 
 @dataclass(frozen=True)
 class Position:
-    """Balances after the latest ledger entry."""
+    """Balances after the latest ledger entry.
+
+    `window_peak` (highest principal recorded so far; None = the current principal) and
+    `window_interest_paid` (interest collected by earlier entries) only matter while the
+    position is still in the first 7 days, when every entry so far lies in those days.
+    Only entries posted under the earlier rule have window interest.
+    """
 
     as_of: date
     principal: Decimal
     interest: Decimal
     compoundings: int = 0
+    window_peak: Decimal | None = None
+    window_interest_paid: Decimal = ZERO
 
 
 @dataclass(frozen=True)
@@ -85,7 +99,9 @@ class Quote:
     period_days: int
     principal: Decimal
     interest: Decimal
-    loan_age_days: int = CLOSING_MINIMUM_DAYS  # inclusive age on as_of
+    first_week: bool = False  # as_of is in days 1-7 and the first-week charge is not yet settled
+    window_peak: Decimal | None = None  # set while the quote includes the first-week charge
+    first_week_interest: Decimal | None = None  # 7 days on the peak; set when first_week
 
     @property
     def total(self) -> Decimal:
@@ -105,7 +121,33 @@ def advance(position: Position, entry: Entry) -> Position:
         principal=entry.principal_balance,
         interest=entry.interest_balance,
         compoundings=position.compoundings + (1 if entry.kind == COMPOUNDING else 0),
+        window_peak=max(window_peak(position), entry.principal_balance),
+        window_interest_paid=position.window_interest_paid + (entry.current_interest if entry.kind == COLLECTION else ZERO),
     )
+
+
+def first_week_end(terms: LoanTerms) -> date:
+    """Day 7 of the loan (W), the last day covered by the first-week charge."""
+    return terms.start_date + timedelta(days=CLOSING_MINIMUM_DAYS - 1)
+
+
+def first_week_open(terms: LoanTerms, position: Position) -> bool:
+    """True until the first-week charge is settled, i.e. while no entry is dated after day 7."""
+    return position.as_of <= first_week_end(terms)
+
+
+def window_peak(position: Position) -> Decimal:
+    if position.window_peak is None:
+        return position.principal
+    return max(position.window_peak, position.principal)
+
+
+def _first_week_due(terms: LoanTerms, position: Position, days: int = CLOSING_MINIMUM_DAYS) -> Decimal:
+    """Unrounded first-week interest still to charge: `days` on the peak, less interest already
+    charged in the window (paid, or owed on the position), so loans begun under the earlier
+    rule are never charged twice."""
+    charged = position.window_interest_paid + max(position.interest, ZERO)
+    return max(ZERO, interest_for(window_peak(position), terms.rate, days) - charged)
 
 
 def opening_entry(terms: LoanTerms, principal: Decimal) -> Entry:
@@ -122,6 +164,8 @@ def due_compoundings(terms: LoanTerms, position: Position, as_of: date) -> tuple
 
     If a past anniversary was never applied and later entries already exist (legacy
     data), the compounding is dated on the latest entry so the ledger stays in order.
+    A compounding that ends the first week settles the 7 days on the peak plus the exact
+    days after day 7, rounded once.
     """
     entries: list[Entry] = []
     current = position
@@ -130,8 +174,14 @@ def due_compoundings(terms: LoanTerms, position: Position, as_of: date) -> tuple
         if due > as_of:
             break
         on = max(due, current.as_of)
-        days = accrual_days(current.as_of, on, PeriodEnd.COMPOUNDING)
-        interest = money(current.interest + interest_for(current.principal, terms.rate, days))
+        if first_week_open(terms, current):
+            extra = (on - first_week_end(terms)).days - 1
+            days = CLOSING_MINIMUM_DAYS + extra
+            accrued = _first_week_due(terms, current) + interest_for(current.principal, terms.rate, extra)
+        else:
+            days = accrual_days(current.as_of, on, PeriodEnd.COMPOUNDING)
+            accrued = interest_for(current.principal, terms.rate, days)
+        interest = money(current.interest + accrued)
         principal = money(current.principal + interest)
         entry = Entry(COMPOUNDING, on, ZERO, interest, ZERO, principal, ZERO, days)
         entries.append(entry)
@@ -155,14 +205,9 @@ def days_already_charged(rows: Iterable[HistoryRow]) -> int:
     return total
 
 
-def quote(
-    terms: LoanTerms,
-    position: Position,
-    as_of: date,
-    *,
-    closing: bool = False,
-    prior_days_charged: int = 0,
-) -> Quote:
+def quote(terms: LoanTerms, position: Position, as_of: date, *, closing: bool = False) -> Quote:
+    """What is owed on `as_of`. A closing quote inside the first 7 days charges 7 days on the
+    window peak; a display quote there shows the peak's interest for the days so far."""
     if as_of < position.as_of:
         raise LedgerError(
             "backdated",
@@ -171,37 +216,62 @@ def quote(
     compoundings, current = due_compoundings(terms, position, as_of)
     if current.interest < 0:
         # A negative interest balance (earlier system) is a credit: it reduces what is owed.
-        current = Position(current.as_of, current.principal + current.interest, ZERO, current.compoundings)
-    days = accrual_days(current.as_of, as_of, PeriodEnd.CUSTOMER)
-    age = (as_of - terms.start_date).days + 1
-    if closing:
-        days = closing_days(days, prior_days_charged + sum(c.accrued_days for c in compoundings), age)
-    interest = money(current.interest + interest_for(current.principal, terms.rate, days))
+        current = replace(current, principal=current.principal + current.interest, interest=ZERO)
+    peak: Decimal | None = None
+    first_week = False
+    if not first_week_open(terms, current):
+        days = accrual_days(current.as_of, as_of, PeriodEnd.CUSTOMER)
+        accrued = interest_for(current.principal, terms.rate, days)
+    else:
+        peak = money(window_peak(current))
+        end = first_week_end(terms)
+        if as_of > end:  # the first event after day 7 settles the first week
+            extra = (as_of - end).days
+            days = CLOSING_MINIMUM_DAYS + extra
+            accrued = _first_week_due(terms, current) + interest_for(current.principal, terms.rate, extra)
+        else:
+            first_week = True
+            days = CLOSING_MINIMUM_DAYS if closing else (as_of - terms.start_date).days + 1
+            accrued = _first_week_due(terms, current, days)
     return Quote(
         as_of=as_of,
         compoundings=tuple(compoundings),
         position=current,
         period_days=days,
         principal=money(current.principal),
-        interest=interest,
-        loan_age_days=age,
+        interest=money(current.interest + accrued),
+        first_week=first_week,
+        window_peak=peak,
+        first_week_interest=money(interest_for(peak, terms.rate, CLOSING_MINIMUM_DAYS)) if first_week else None,
     )
 
 
 def collect(q: Quote, amount: object) -> Entry:
-    """Record a payment. Interest is settled first, the rest reduces principal."""
+    """Record a payment. Interest is settled first, the rest reduces principal. In the first
+    7 days the whole payment reduces principal and no interest accrues."""
     paid = parse_amount(amount, field="Collection amount")
+    if q.first_week:
+        if paid >= q.principal:
+            raise LedgerError(
+                "first_week_clears_principal",
+                f"In the first {CLOSING_MINIMUM_DAYS} days a payment goes to principal. "
+                f"₹{paid} would clear the principal; use Close loan to settle.",
+            )
+        return Entry(
+            kind=COLLECTION,
+            on=q.as_of,
+            amount_paid=paid,
+            current_principal=-paid,
+            current_interest=ZERO,
+            principal_balance=q.principal - paid,
+            interest_balance=money(q.position.interest),
+            accrued_days=0,
+        )
     if paid >= q.total:
         raise LedgerError(
             "settle_with_close",
             f"₹{paid} would settle the whole amount due (₹{q.total}). Use 'Close loan' to settle in full, "
             "so the closing rules apply and the pledged items are released.",
-        )
-    if q.loan_age_days < CLOSING_MINIMUM_DAYS and paid > q.interest:
-        raise LedgerError(
-            "early_principal",
-            f"In a loan's first {CLOSING_MINIMUM_DAYS} days a payment can cover interest only (₹{q.interest} now). "
-            "To repay principal, close the loan; the 7-day minimum applies.",
         )
     return _payment(q, paid)
 
@@ -223,7 +293,8 @@ def _payment(q: Quote, paid: Decimal) -> Entry:
 
 
 def top_up(q: Quote, amount: object) -> Entry:
-    """Disburse additional principal. Interest accrued so far stays owed."""
+    """Disburse additional principal. Interest accrued so far stays owed. In the first 7 days
+    nothing accrues; the new principal can raise the window peak."""
     added = parse_amount(amount, field="Additional principal")
     return Entry(
         kind=TOP_UP,
@@ -232,13 +303,13 @@ def top_up(q: Quote, amount: object) -> Entry:
         current_principal=added,
         current_interest=ZERO,
         principal_balance=q.principal + added,
-        interest_balance=q.interest,
-        accrued_days=q.period_days,
+        interest_balance=money(q.position.interest) if q.first_week else q.interest,
+        accrued_days=0 if q.first_week else q.period_days,
     )
 
 
 def close(q: Quote, amount_received: object, *, write_off_remaining: bool) -> list[Entry]:
-    """Settle a loan. `q` must be a closing quote (7-day minimum applied).
+    """Settle a loan. `q` must be a closing quote (first-week charge applied).
 
     Records the cash actually received, then writes off anything left over (only when
     explicitly confirmed). Accrual happens once for the whole closing event. A loan with
@@ -277,24 +348,42 @@ def close(q: Quote, amount_received: object, *, write_off_remaining: bool) -> li
     return entries
 
 
+CLOSING = "close"  # history-import event only: stored as the addColl/writeoff rows of a live close
+
+
 @dataclass(frozen=True)
 class ImportEvent:
     on: date
-    kind: str  # COLLECTION or TOP_UP
-    amount: Decimal
+    kind: str  # COLLECTION, TOP_UP or CLOSING
+    amount: Decimal  # for CLOSING: the amount received (may be zero)
+    write_off_remaining: bool = False  # CLOSING only: confirms writing off what the amount leaves unpaid
 
 
 def simulate(terms: LoanTerms, principal: Decimal, events: Sequence[ImportEvent], today: date) -> list[Entry]:
-    """Replay a loan's history (used by history import preview and commit alike)."""
+    """Replay a loan's history (used by history import preview and commit alike). The
+    first-7-days rule applies exactly as for live entries; `advance` tracks the peak.
+    A closing event uses the live closing quote and `close`, must come last, and stops the
+    replay: a closed loan gets no compounding afterwards."""
     if terms.start_date > today:
         raise LedgerError("future_date", "The loan date cannot be in the future.")
     entries = [opening_entry(terms, principal)]
     position = Position(terms.start_date, money(principal), ZERO, 0)
+    closed = False
     for event in sorted(events, key=lambda e: e.on):
         if event.on < terms.start_date:
             raise LedgerError("backdated", f"An entry on {event.on} is before the loan date.")
         if event.on > today:
             raise LedgerError("future_date", f"An entry on {event.on} is in the future.")
+        if closed:
+            if event.kind == CLOSING:
+                raise LedgerError("close_twice", "A loan can be closed only once.")
+            raise LedgerError("close_not_last", "The loan closing must be the last entry.")
+        if event.kind == CLOSING:
+            q = quote(terms, position, event.on, closing=True)
+            entries.extend(q.compoundings)
+            entries.extend(close(q, event.amount, write_off_remaining=event.write_off_remaining))
+            closed = True
+            continue
         q = quote(terms, position, event.on)
         entries.extend(q.compoundings)
         if event.kind == COLLECTION:
@@ -305,6 +394,7 @@ def simulate(terms: LoanTerms, principal: Decimal, events: Sequence[ImportEvent]
             raise LedgerError("invalid_type", f"Unsupported entry type '{event.kind}'.")
         entries.append(entry)
         position = advance(q.position, entry)
-    trailing, _ = due_compoundings(terms, position, today)
-    entries.extend(trailing)
+    if not closed:
+        trailing, _ = due_compoundings(terms, position, today)
+        entries.extend(trailing)
     return entries

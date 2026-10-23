@@ -66,6 +66,7 @@ class Repos:
 
     def __init__(self, conn: Any):
         from .admin import AuditRepo, BackupsRepo, SettingsRepo
+        from .cash import CashRepo
         from .customers import CustomersRepo
         from .loans import LoansRepo, StatementsRepo
         from .reports import ReportsRepo
@@ -82,6 +83,7 @@ class Repos:
         self.audit = AuditRepo(self.db)
         self.settings = SettingsRepo(self.db)
         self.backups = BackupsRepo(self.db)
+        self.cash = CashRepo(self.db)
 
     def transaction(self):
         return self.db.transaction()

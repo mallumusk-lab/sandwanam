@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { branches as branchesApi, customers, imports } from "../../api/endpoints.js";
 import { useAuth } from "../../auth/AuthContext.jsx";
@@ -12,14 +12,18 @@ import { addressError, nameError, phoneError, rateError, tenureError, weightErro
 import { Button, IconButton, Segmented } from "../../ui/controls.jsx";
 import { DataTable } from "../../ui/DataTable.jsx";
 import { EmptyState, ErrorState } from "../../ui/feedback.jsx";
-import { AmountField, DateField, SelectField, TextField, TextareaField, WeightField, focusFirstError } from "../../ui/fields.jsx";
+import {
+  AmountField, CheckboxField, DateField, SelectField, TextField, TextareaField, WeightField, focusFirstError,
+} from "../../ui/fields.jsx";
 import { Banner, Card, PageHeader, Stepper } from "../../ui/surfaces.jsx";
 import { ItemsEditor } from "../loans/ItemsEditor.jsx";
 
 const STEPS = ["Customer", "Loan and past entries", "Review and import"];
-const emptyEntry = () => ({ key: newRequestId(), date: "", kind: "addColl", amount: "" });
+const emptyEntry = () => ({ key: newRequestId(), date: "", kind: "addColl", amount: "", writeOff: false });
+// A past settlement: the server replays it as a live close (7-day minimum, write-off only when confirmed).
+const CLOSE = "close";
 
-function CustomerStep({ state, setState, onNext }) {
+export function CustomerStep({ state, setState, onNext }) {
   const { user, branch } = useAuth();
   const [term, setTerm] = useState("");
   const [errors, setErrors] = useState({});
@@ -30,6 +34,13 @@ function CustomerStep({ state, setState, onNext }) {
   const focusAfter = (ref) => requestAnimationFrame(() => ref.current?.focus());
   const branchList = useAsync((signal) => (user.is_head_office ? branchesApi.list({ signal }) : Promise.resolve([])), [user.is_head_office]);
   const mayCreate = can(user, "newcustomer");
+  // A new customer defaults to the branch picked in the top bar, else the head-office branch.
+  useEffect(() => {
+    const office = branchList.data?.find((b) => b.is_head_office);
+    if (office) {
+      setState((s) => (s.newCustomer.branch ? s : { ...s, newCustomer: { ...s.newCustomer, branch: office.code } }));
+    }
+  }, [branchList.data, setState]);
 
   useEffect(() => {
     if (state.mode !== "existing" || term.trim().length < 2) {
@@ -126,12 +137,14 @@ function CustomerStep({ state, setState, onNext }) {
   );
 }
 
-function LoanStep({ state, setState, onBack, onNext }) {
+export function LoanStep({ state, setState, onBack, onNext }) {
   const [errors, setErrors] = useState({});
   const [pending, setPending] = useState(false);
   const addEntryRef = useRef(null);
+  const closedHintId = useId();
   const today = todayIST();
   const loan = state.loan;
+  const closes = state.entries.some((entry) => entry.kind === CLOSE);
   const setLoan = (key) => (e) => setState((s) => ({ ...s, loan: { ...s.loan, [key]: e.target.value } }));
   const setEntry = (key, field, value) =>
     setState((s) => ({ ...s, entries: s.entries.map((entry) => (entry.key === key ? { ...entry, [field]: value } : entry)) }));
@@ -149,17 +162,21 @@ function LoanStep({ state, setState, onBack, onNext }) {
       date: !isValidDay(loan.date) ? "Enter the date the loan was given." : loan.date > today ? "The loan date can't be in the future." : "",
     };
     state.entries.forEach((entry, index) => {
-      const dateProblem = !isValidDay(entry.date) ? "Enter a date." : entry.date < loan.date ? "This is before the loan date." : entry.date > today ? "This is in the future." : "";
-      const amountProblem = amountError(entry.amount, { label: "Amount" });
+      const closing = entry.kind === CLOSE;
+      const dateProblem = !isValidDay(entry.date) ? "Enter a date." : entry.date < loan.date ? "This is before the loan date." : entry.date > today ? "This is in the future."
+        : closing && state.entries.some((other) => other.date > entry.date) ? "The loan can't close before another entry's date." : "";
+      const amountProblem = amountError(entry.amount, { label: closing ? "Amount received at closing" : "Amount", allowZero: closing });
       if (dateProblem) found[`date-${entry.key}`] = `Entry ${index + 1}: ${dateProblem}`;
       if (amountProblem) found[`amount-${entry.key}`] = `Entry ${index + 1}: ${amountProblem}`;
+      if (closing && index !== state.entries.length - 1) found[`kind-${entry.key}`] = `Entry ${index + 1}: Only the last entry can be the loan closing.`;
     });
     setErrors(found);
     if (Object.values(found).some(Boolean)) return requestAnimationFrame(() => focusFirstError(event.target));
     setPending(true);
     try {
       const preview = await imports.preview(buildPayload(state));
-      setState((s) => ({ ...s, preview }));
+      // A new preview may show a different remainder, so an earlier write-off confirmation is cleared.
+      setState((s) => ({ ...s, preview, entries: s.entries.map((entry) => ({ ...entry, writeOff: false })) }));
       onNext();
     } catch (err) {
       setErrors({ form: err.message });
@@ -182,28 +199,40 @@ function LoanStep({ state, setState, onBack, onNext }) {
       </div>
       <fieldset className="stack">
         <legend>Past entries</legend>
-        <p className="field-hint">Payments and principal additions made before this system, oldest first or in any order.</p>
-        {state.entries.map((entry, index) => (
-          <div key={entry.key} className="grid grid-tight entry-row">
-            <DateField label={`Entry ${index + 1} date`} value={entry.date} min={loan.date || undefined} max={today}
-              onChange={(e) => setEntry(entry.key, "date", e.target.value)} error={errors[`date-${entry.key}`]} />
-            <SelectField label={`Entry ${index + 1} type`} value={entry.kind} onChange={(e) => setEntry(entry.key, "kind", e.target.value)}>
-              <option value="addColl">Payment received</option>
-              <option value="disbursement">Principal added</option>
-            </SelectField>
-            <AmountField label={`Entry ${index + 1} amount`} value={entry.amount} onChange={(e) => setEntry(entry.key, "amount", e.target.value)}
-              error={errors[`amount-${entry.key}`]} />
-            <div className="field">
-              <span className="field-label" aria-hidden="true">&nbsp;</span>
-              <IconButton icon="trash" label={`Remove entry ${index + 1}`}
-                onClick={() => {
-                  setState((s) => ({ ...s, entries: s.entries.filter((e) => e.key !== entry.key) }));
-                  requestAnimationFrame(() => addEntryRef.current?.focus());
-                }} />
+        <p className="field-hint">
+          Payments and principal additions made before this system, oldest first or in any order. If the loan was settled, add the closing as the last entry.
+        </p>
+        {state.entries.map((entry, index) => {
+          const closing = entry.kind === CLOSE;
+          const last = index === state.entries.length - 1;
+          return (
+            <div key={entry.key} className="grid grid-tight entry-row">
+              <DateField label={closing ? "Closing date" : `Entry ${index + 1} date`} value={entry.date} min={loan.date || undefined} max={today}
+                onChange={(e) => setEntry(entry.key, "date", e.target.value)} error={errors[`date-${entry.key}`]} />
+              <SelectField label={`Entry ${index + 1} type`} value={entry.kind} onChange={(e) => setEntry(entry.key, "kind", e.target.value)}
+                error={errors[`kind-${entry.key}`]}>
+                <option value="addColl">Payment received</option>
+                <option value="disbursement">Additional principal</option>
+                {last || closing ? <option value={CLOSE}>Loan closed (settled)</option> : null}
+              </SelectField>
+              <AmountField label={closing ? "Amount received at closing" : `Entry ${index + 1} amount`} value={entry.amount}
+                onChange={(e) => setEntry(entry.key, "amount", e.target.value)} error={errors[`amount-${entry.key}`]} />
+              <div className="field">
+                <span className="field-label" aria-hidden="true">&nbsp;</span>
+                <IconButton icon="trash" label={`Remove entry ${index + 1}`}
+                  onClick={() => {
+                    setState((s) => ({ ...s, entries: s.entries.filter((e) => e.key !== entry.key) }));
+                    requestAnimationFrame(() => addEntryRef.current?.focus());
+                  }} />
+              </div>
             </div>
-          </div>
-        ))}
-        <div><Button ref={addEntryRef} icon="plus" onClick={() => setState((s) => ({ ...s, entries: [...s.entries, emptyEntry()] }))}>Add an entry</Button></div>
+          );
+        })}
+        <div>
+          <Button ref={addEntryRef} icon="plus" disabled={closes} aria-describedby={closes ? closedHintId : undefined}
+            onClick={() => setState((s) => ({ ...s, entries: [...s.entries, emptyEntry()] }))}>Add an entry</Button>
+          {closes ? <p className="field-hint" id={closedHintId}>A closed loan has no later entries.</p> : null}
+        </div>
       </fieldset>
       <div className="form-actions">
         <Button icon="chevronLeft" onClick={onBack}>Back</Button>
@@ -213,7 +242,7 @@ function LoanStep({ state, setState, onBack, onNext }) {
   );
 }
 
-function buildPayload(state) {
+export function buildPayload(state) {
   return {
     loan: {
       items: state.items,
@@ -224,14 +253,21 @@ function buildPayload(state) {
       tenure_months: Number(state.loan.tenure),
       loan_date: state.loan.date,
     },
-    entries: state.entries.map((e) => ({ date: e.date, kind: e.kind, amount: normaliseAmount(e.amount) })),
+    entries: state.entries.map((e) => ({
+      date: e.date,
+      kind: e.kind,
+      amount: normaliseAmount(e.amount),
+      ...(e.kind === CLOSE ? { write_off_remaining: Boolean(e.writeOff) } : {}),
+    })),
   };
 }
 
-function ReviewStep({ state, onBack, onDone }) {
+export function ReviewStep({ state, setState, onBack, onDone }) {
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
   const [requestId] = useState(newRequestId);
+  const { closes_on: closesOn, remaining_after_close: remaining } = state.preview;
+  const closeEntry = state.entries.find((e) => e.kind === CLOSE);
   const commit = async () => {
     setPending(true);
     setError("");
@@ -254,7 +290,9 @@ function ReviewStep({ state, onBack, onDone }) {
   const columns = [
     { key: "date", header: "Date", render: (e) => formatDay(e.date) },
     { key: "kind", header: "Entry", render: (e) => entryLabel(e.kind) },
-    { key: "amount", header: "Amount", numeric: true, render: (e) => formatINR(e.kind === "addColl" ? e.amount_paid : e.kind === "newLoan" ? e.principal_balance : e.principal_change) },
+    // A loan closes once, so the write-off row's amount is the server's remainder.
+    { key: "amount", header: "Amount", numeric: true,
+      render: (e) => formatINR(e.kind === "addColl" ? e.amount_paid : e.kind === "newLoan" ? e.principal_balance : e.kind === "writeoff" ? remaining : e.principal_change) },
     { key: "interest", header: "Interest paid", numeric: true, render: (e) => (e.kind === "addColl" ? formatINR(e.interest_paid) : "—") },
     { key: "days", header: "Days", numeric: true, render: (e) => e.accrued_days },
     { key: "principal_balance", header: "Principal balance", numeric: true, render: (e) => formatINR(e.principal_balance) },
@@ -268,6 +306,16 @@ function ReviewStep({ state, onBack, onDone }) {
       {error ? <Banner tone="danger">{error}</Banner> : null}
       <DataTable columns={columns} rows={state.preview.entries} rowKey={(e) => e.index} caption="Calculated ledger" />
       <p><strong>Balance after import:</strong> principal {formatINR(state.preview.principal_balance)}, interest {formatINR(state.preview.interest_balance)}.</p>
+      {closesOn ? <p><strong>{`This loan will be imported as closed on ${formatDay(closesOn)}.`}</strong></p> : null}
+      {remaining && closeEntry ? (
+        <CheckboxField checked={Boolean(closeEntry.writeOff)} disabled={pending}
+          onChange={(e) => {
+            const writeOff = e.target.checked;
+            setState((s) => ({ ...s, entries: s.entries.map((entry) => (entry.kind === CLOSE ? { ...entry, writeOff } : entry)) }));
+          }}
+          label={`Write off the remaining ${formatINR(remaining)}`}
+          hint="The amount received at closing was short. The loan will be imported as closed with this amount written off." />
+      ) : null}
       <div className="form-actions">
         <Button icon="chevronLeft" onClick={onBack} disabled={pending}>Back</Button>
         <Button variant="primary" icon="upload" loading={pending} onClick={commit}>Import loan</Button>
@@ -288,9 +336,10 @@ const initialState = (branch) => ({
 
 export default function HistoryImportPage() {
   useDocumentTitle("History import");
-  const { branch } = useAuth();
+  const { user, branch } = useAuth();
+  const defaultBranch = branch || user.branch || "";
   const [step, setStep] = useState(0);
-  const [state, setState] = useState(() => initialState(branch));
+  const [state, setState] = useState(() => initialState(defaultBranch));
   const [done, setDone] = useState(null);
   const stepHeading = useFocusOnChange(step);
   const doneHeading = useFocusOnChange(done);
@@ -304,7 +353,7 @@ export default function HistoryImportPage() {
             action={
               <div className="cluster">
                 <Button variant="primary" to={`/customers/${done.customer_id}`}>Open the customer</Button>
-                <Button onClick={() => { setDone(null); setState(initialState(branch)); setStep(0); }}>Import another</Button>
+                <Button onClick={() => { setDone(null); setState(initialState(defaultBranch)); setStep(0); }}>Import another</Button>
               </div>
             }>
             The loan and its history are now on the customer's record.
@@ -322,7 +371,7 @@ export default function HistoryImportPage() {
       <Card title={STEPS[step]}>
         {step === 0 ? <CustomerStep state={state} setState={setState} onNext={() => setStep(1)} /> : null}
         {step === 1 ? <LoanStep state={state} setState={setState} onBack={() => setStep(0)} onNext={() => setStep(2)} /> : null}
-        {step === 2 && state.preview ? <ReviewStep state={state} onBack={() => setStep(1)} onDone={setDone} /> : null}
+        {step === 2 && state.preview ? <ReviewStep state={state} setState={setState} onBack={() => setStep(1)} onDone={setDone} /> : null}
         {step === 2 && !state.preview ? <ErrorState error={{ message: "Preview the loan first." }} onRetry={() => setStep(1)} /> : null}
       </Card>
       <p className="field-hint">Need the customer's details? <Link to="/customers">Search the directory</Link>.</p>

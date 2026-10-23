@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { renderToStaticMarkup } from "react-dom/server";
@@ -60,6 +62,17 @@ test("tables use header scope and label stacked cells", () => {
   assert.match(render(<DataTable columns={[]} rows={[]} empty={<p>Nothing</p>} />), /Nothing/);
 });
 
+test("tables can add a full-width detail row under a row", () => {
+  const columns = [{ key: "a", header: "Name" }, { key: "b", header: "Amount", numeric: true }, { key: "c", header: "Note" }];
+  const rows = [{ id: 1, a: "X", b: "1" }, { id: 2, a: "Y", b: "2" }];
+  const html = render(<DataTable columns={columns} rows={rows} rowKey={(r) => r.id} detail={(r) => (r.id === 1 ? <p>Working for X</p> : null)} />);
+  assert.match(html, /<tr class="has-detail">[\s\S]*?<\/tr><tr class="table-detail"><td colSpan="3"><p>Working for X<\/p><\/td><\/tr>/);
+  assert.equal((html.match(/table-detail/g) ?? []).length, 1, "no detail row when detail() returns nothing");
+  assert.equal((html.match(/<tr>/g) ?? []).length, 2, "header row and the row without detail stay plain");
+  const plain = render(<DataTable columns={columns} rows={rows} rowKey={(r) => r.id} />);
+  assert.doesNotMatch(plain, /has-detail|table-detail|colSpan/);
+});
+
 test("segmented controls are a labelled radio group", () => {
   const html = render(<Segmented label="Period" value="b" onChange={() => {}} options={[{ value: "a", label: "A" }, { value: "b", label: "B" }]} />);
   assert.match(html, /<legend class="visually-hidden">Period<\/legend>/);
@@ -106,4 +119,30 @@ test("charts keep identity out of colour alone and provide a table", () => {
   assert.match(html, /aria-label="Jan: Disbursed ₹1,000.00, Collected ₹500.00"/);
   assert.match(render(<BarList title="Aging" rows={[{ label: "0–30 days", value: 3 }]} format={(v) => `${v} loans`} />), /3 loans/);
   assert.equal(compactRupees("150000"), "₹1.5L");
+});
+
+/** The declarations of one rule in components.css, found by its exact selector text. */
+function cssRule(css, selector) {
+  const start = css.indexOf(`${selector} {`);
+  assert.ok(start >= 0, `no rule for ${selector}`);
+  return css.slice(start + selector.length + 2, css.indexOf("}", start));
+}
+
+test("phone layout: charts, bars, stacked tables, dialogs and tiles keep content inside the screen", () => {
+  const css = readFileSync(join(process.cwd(), "src", "ui", "components.css"), "utf8");
+  // A <figure> has a 40px side margin by default, which pushed charts past the card edge.
+  assert.match(cssRule(css, ".chart"), /width: 100%; margin: 0;/);
+  // The bar fill is a <span>: without display:block its width is ignored and no bar shows.
+  assert.match(cssRule(css, ".hbar-fill"), /display: block;/);
+  // Visually hidden header text is positioned; the wrapper must contain it, or the page scrolls sideways.
+  assert.match(cssRule(css, ".table-wrap"), /position: relative;[\s\S]*overflow-x: auto;/);
+  const stacked = css.slice(css.indexOf("@media screen and (max-width: 720px)"));
+  assert.match(stacked, /\.table-stack caption \{ display: block; \}/, "captions span the stacked table instead of one word per line");
+  assert.match(stacked, /\.table-stack td, \.table-stack tbody th \{ display: flex;/, "row headers stack like cells");
+  // Long text values in a summary wrap instead of widening a dialog; amounts keep their width.
+  assert.match(cssRule(css, ".summary-list dd"), /flex-shrink: 0; max-width: 65%; white-space: normal; overflow-wrap: break-word;/);
+  // A grid item's minimum width is its content; the cash history day must let its table scroll inside.
+  assert.match(cssRule(css, ".cash-history-day"), /grid-template-columns: minmax\(0, 1fr\);/);
+  // Narrow KPI tiles shrink the figure so crore amounts stay inside the tile.
+  assert.match(css, /@supports \(width: 1cqi\) \{\s*\.kpi \{ container-type: inline-size; \}\s*\.kpi-value \{ font-size: min\(var\(--text-xl\), 12cqi\); \}/);
 });

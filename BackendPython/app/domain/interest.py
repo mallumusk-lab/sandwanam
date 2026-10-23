@@ -5,7 +5,10 @@
   entry) is counted inclusively: (end − start) + 1 days. A day that ends one period and
   starts the next is therefore charged in both; this is the agreed rule.
 - A period that ends in an annual compounding entry counts exact days (no +1).
-- Closing within the first 7 days (inclusive) charges at least 7 days of interest in total.
+- The first 7 days (inclusive) are charged as 7 days' interest on the highest principal
+  reached in them, when the loan closes in those days or at the first event after day 7
+  (see app/domain/ledger.py). `closing_days` is the earlier minimum-days rule, kept for
+  reference; the ledger no longer uses it.
 """
 from __future__ import annotations
 

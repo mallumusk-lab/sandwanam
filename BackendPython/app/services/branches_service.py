@@ -180,6 +180,9 @@ async def delete_branch(repos, actor: Actor, username: str) -> None:
         raise Forbidden("The head office account cannot be deleted.")
     if await repos.users.customer_count(row["branch_prefix"]):
         raise Conflict("This branch has customers. Deactivate it instead of deleting it.", code="branch_in_use")
+    if await repos.cash.latest_day(row["branch_prefix"]):
+        raise Conflict("This branch has cash ledger days. Deactivate it instead of deleting it.",
+                       code="branch_in_use")
     async with repos.transaction():
         await repos.users.delete(row["username"])
         await repos.audit.log(username=actor.username, action="DELETE_BRANCH", entity_type="ACCOUNT",

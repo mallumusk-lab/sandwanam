@@ -1,4 +1,8 @@
-"""JSON views of database rows. Money is always a string with two decimals."""
+"""JSON views of database rows. Money is always a string with two decimals.
+
+Quotes carry the first-7-days state (`first_week`, `window_peak`, `first_week_interest`);
+statement rows carry `in_first_week` and, on the loan statement only, `calculation`.
+"""
 from __future__ import annotations
 
 import json
@@ -6,9 +10,11 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import Any
 
-from ..domain import dates, particulars
-from ..domain.ledger import Quote
+from ..domain import dates, particulars, reports
+from ..domain.interest import CLOSING_MINIMUM_DAYS
+from ..domain.ledger import NEW_LOAN, Quote
 from ..domain.money import fmt
+from ..domain.statement_calc import Calculation
 
 
 def money(value: Decimal | None) -> str | None:
@@ -59,11 +65,24 @@ def quote(q: Quote | None) -> dict | None:
         "total": money(q.total),
         "period_days": q.period_days,
         "compoundings_due": len(q.compoundings),
+        "first_week": q.first_week,
+        "window_peak": money(q.window_peak),
+        "first_week_interest": money(q.first_week_interest),
     }
+
+
+def follow_up(row: dict) -> tuple[str | None, bool]:
+    """(effective follow-up date, whether staff set it). Open loans without a stored date
+    default to the loan date + 364 days; closed loans have none."""
+    stored = row.get("follow_up_date")
+    start = dates.business_date(row["date"]) if row.get("date") else None
+    effective = reports.effective_follow_up(stored, start, (row.get("loantype") or "open") == "open")
+    return (effective.isoformat() if effective else None), stored is not None and effective is not None
 
 
 def loan(row: dict, live: Quote | None = None) -> dict:
     items = items_of(row)
+    follow_up_date, follow_up_set = follow_up(row)
     return {
         "loan_number": row["loan_number"],
         "customer_id": row.get("customerid"),
@@ -83,12 +102,47 @@ def loan(row: dict, live: Quote | None = None) -> dict:
         "principal": money(row.get("principle_amount")),
         "rate": money(row.get("interest")),
         "tenure_months": row.get("tenure"),
-        "follow_up_date": row["follow_up_date"].isoformat() if row.get("follow_up_date") else None,
+        "follow_up_date": follow_up_date,
+        "follow_up_set": follow_up_set,
         "outstanding": quote(live),
     }
 
 
-def statement(row: dict) -> dict:
+def in_first_week(row: dict, loan_start: date | None) -> bool:
+    """A new-system entry (not the opening) dated in days 1-7 of the loan that charged nothing
+    (the first-7-days rule stores accrued_days 0 and no interest). Rows posted in days 1-7 under
+    the earlier rule charged interest, so they are not flagged."""
+    if loan_start is None or row.get("created_at") is None or row.get("transactiontype") == NEW_LOAN:
+        return False
+    if row.get("accrued_days") != 0 or Decimal(row.get("currentinterest") or 0) != 0:
+        return False
+    on = dates.business_date(row["date"])
+    return loan_start <= on and (on - loan_start).days < CLOSING_MINIMUM_DAYS
+
+
+def calculation(c: Calculation) -> dict:
+    return {
+        "method": c.method,
+        "period_from": c.period_from.isoformat() if c.period_from else None,
+        "period_to": c.period_to.isoformat() if c.period_to else None,
+        "days": c.days,
+        "principal_charged": money(c.principal_charged),
+        "rate": money(c.rate),
+        "interest_accrued": money(c.interest_accrued),
+        "peak_principal": money(c.peak_principal),
+        "first_week_days": c.first_week_days,
+        "extra_days": c.extra_days,
+        "extra_principal": money(c.extra_principal),
+        "interest_paid": fmt(c.interest_paid),
+        "principal_paid": fmt(c.principal_paid),
+        "principal_balance": fmt(c.principal_balance),
+        "interest_balance": fmt(c.interest_balance),
+        "note": c.note,
+    }
+
+
+def statement(row: dict, calc: Calculation | None = None, *, loan_start: date | None = None) -> dict:
+    """`loan_start` defaults to the row's `loan_date` column when the query joins it."""
     kind = row.get("transactiontype")
     legacy_writeoff = kind == "writeoff" and row.get("writeoff_principal") is None
     written_off = None
@@ -98,7 +152,7 @@ def statement(row: dict) -> dict:
             if legacy_writeoff
             else (row.get("writeoff_principal") or Decimal(0)) + (row.get("writeoff_interest") or Decimal(0))
         )
-    return {
+    view = {
         "id": row["statementid"],
         "loan_number": row.get("loan_number"),
         "kind": kind,
@@ -113,7 +167,15 @@ def statement(row: dict) -> dict:
         "written_off": money(written_off),
         "legacy": row.get("created_at") is None and "created_at" in row,
         "recorded_by": row.get("created_by"),
+        "in_first_week": in_first_week(row, loan_start or _start_of(row)),
     }
+    if calc is not None:
+        view["calculation"] = calculation(calc)
+    return view
+
+
+def _start_of(row: dict) -> date | None:
+    return dates.business_date(row["loan_date"]) if row.get("loan_date") else None
 
 
 def branch(row: dict, *, include_logo: bool = True, include_username: bool = False) -> dict:

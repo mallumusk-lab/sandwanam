@@ -47,7 +47,7 @@ async def customer_detail(customer_id: int, repos: ReposDep, actor: ActorDep) ->
 @router.post("/loans", status_code=201)
 async def create_loan(body: LoanIn, repos: ReposDep, actor: ActorDep, context: ContextDep) -> dict:
     data = NewLoan(body.customer_id, [i.model_dump() for i in body.items], body.gross_weight, body.deduction,
-                   body.principal, body.rate, body.tenure_months, body.loan_date)
+                   body.principal, body.rate, body.tenure_months)
     return await loans_service.create(repos, actor, data, request_id=body.request_id, now=now_utc(), context=context)
 
 
@@ -64,7 +64,7 @@ async def closing_quote(loan_number: str, repos: ReposDep, actor: ActorDep) -> d
 @router.post("/loans/{loan_number}/collections", status_code=201)
 async def collect(loan_number: str, body: PostingIn, repos: ReposDep, actor: ActorDep, context: ContextDep) -> dict:
     return await loans_service.collect(
-        repos, actor, loan_number, amount=body.amount, on=body.date, expected_total=body.expected_total,
+        repos, actor, loan_number, amount=body.amount, expected_total=body.expected_total,
         request_id=body.request_id, now=now_utc(), context=context,
     )
 
@@ -72,7 +72,7 @@ async def collect(loan_number: str, body: PostingIn, repos: ReposDep, actor: Act
 @router.post("/loans/{loan_number}/top-ups", status_code=201)
 async def top_up(loan_number: str, body: PostingIn, repos: ReposDep, actor: ActorDep, context: ContextDep) -> dict:
     return await loans_service.top_up(
-        repos, actor, loan_number, amount=body.amount, on=body.date, expected_total=body.expected_total,
+        repos, actor, loan_number, amount=body.amount, expected_total=body.expected_total,
         request_id=body.request_id, now=now_utc(), context=context,
     )
 
@@ -109,7 +109,7 @@ async def statement_receipt(statement_id: int, repos: ReposDep, actor: ActorDep)
 def _history(body: ImportPreviewIn) -> tuple[HistoryLoan, list[HistoryEntry]]:
     loan = HistoryLoan([i.model_dump() for i in body.loan.items], body.loan.gross_weight, body.loan.deduction,
                        body.loan.principal, body.loan.rate, body.loan.tenure_months, body.loan.loan_date)
-    return loan, [HistoryEntry(e.date, e.kind, e.amount) for e in body.entries]
+    return loan, [HistoryEntry(e.date, e.kind, e.amount, e.write_off_remaining) for e in body.entries]
 
 
 @router.post("/imports/preview")

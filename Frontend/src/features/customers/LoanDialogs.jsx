@@ -1,13 +1,11 @@
 import { useEffect, useMemo, useState } from "react";
 import { loans } from "../../api/endpoints.js";
-import { useAuth } from "../../auth/AuthContext.jsx";
-import { daysBetween, todayIST } from "../../lib/dates.js";
 import { itemsError } from "../../lib/items.js";
 import { newRequestId } from "../../lib/ledger.js";
 import { amountError, compare, formatINR, normaliseAmount, subtract } from "../../lib/money.js";
 import { Button } from "../../ui/controls.jsx";
 import { ErrorState, SkeletonRows } from "../../ui/feedback.jsx";
-import { AmountField, CheckboxField, DateField, focusFirstError } from "../../ui/fields.jsx";
+import { AmountField, CheckboxField, focusFirstError } from "../../ui/fields.jsx";
 import { Icon } from "../../ui/Icon.jsx";
 import { Modal } from "../../ui/Modal.jsx";
 import { Banner, SummaryList } from "../../ui/surfaces.jsx";
@@ -49,14 +47,33 @@ function OutstandingSummary({ outstanding, label = "Outstanding today" }) {
   );
 }
 
+/**
+ * Days 1-7 of a loan (the server's `first_week`): payments reduce principal, and 7 days' interest
+ * on the highest principal is charged at closing or from day 8. Amounts come from the server.
+ */
+export function FirstWeekBanner({ outstanding, closing = false }) {
+  if (closing) {
+    return (
+      <Banner tone="info">
+        Closing in the first 7 days charges 7 days' interest on the highest principal
+        {outstanding.window_peak ? ` (${formatINR(outstanding.window_peak)})` : ""}.
+      </Banner>
+    );
+  }
+  return (
+    <Banner tone="info">
+      In the first 7 days a payment reduces the principal. 7 days' interest on the highest principal
+      ({formatINR(outstanding.first_week_interest)}) is charged when the loan is closed or from day 8.
+    </Banner>
+  );
+}
+
 // Dialogs are mounted only while open, so their state always starts fresh from props.
 
 /** Record a payment (mode "collect") or add principal (mode "topup"). */
 export function PostingDialog({ mode, loan, open, onClose, onPosted }) {
-  const { user } = useAuth();
   const collect = mode === "collect";
   const [amount, setAmount] = useState("");
-  const [date, setDate] = useState("");
   const [outstanding, setOutstanding] = useState(loan.outstanding);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
@@ -64,9 +81,6 @@ export function PostingDialog({ mode, loan, open, onClose, onPosted }) {
   const [result, setResult] = useState(null);
   const [requestId, setRequestId] = useState(newRequestId);
   const [uncertain, setUncertain] = useState(false);
-
-  const today = todayIST();
-  const backdated = Boolean(date) && date !== today;
 
   const submit = async (event) => {
     event.preventDefault();
@@ -77,7 +91,7 @@ export function PostingDialog({ mode, loan, open, onClose, onPosted }) {
       focusErrorIn("posting-form");
       return;
     }
-    if (collect && !backdated && compare(normaliseAmount(amount), outstanding.total) >= 0) {
+    if (collect && compare(normaliseAmount(amount), outstanding.total) >= 0) {
       setError(`That settles the whole amount due (${formatINR(outstanding.total)}). Use "Close loan" instead, so the pledged items are released.`);
       focusErrorIn("posting-form");
       return;
@@ -88,8 +102,7 @@ export function PostingDialog({ mode, loan, open, onClose, onPosted }) {
       const body = {
         amount: normaliseAmount(amount),
         request_id: requestId,
-        date: backdated ? date : undefined,
-        expected_total: backdated ? undefined : outstanding.total,
+        expected_total: outstanding.total,
       };
       const response = collect ? await loans.collect(loan.loan_number, body) : await loans.topUp(loan.loan_number, body);
       setResult(response);
@@ -112,10 +125,13 @@ export function PostingDialog({ mode, loan, open, onClose, onPosted }) {
   };
 
   const title = collect ? "Record a payment" : "Add principal";
+  const firstWeek = Boolean(outstanding?.first_week);
   return (
     <Modal open={open} onClose={onClose} busy={pending} focusKey={result ? "done" : "form"}
       title={result ? title : `${title} · ${loan.loan_number}`}
-      description={result ? undefined : collect ? "Interest due is settled first; the rest reduces the principal." : "Interest due so far stays owed; the new amount starts earning interest."}
+      description={result ? undefined : collect
+        ? firstWeek ? "The whole payment reduces the principal." : "Interest due is settled first; the rest reduces the principal."
+        : "Interest due so far stays owed; the new amount starts earning interest."}
       footer={result ? null : (
         <>
           <Button onClick={onClose} disabled={pending}>Cancel</Button>
@@ -130,15 +146,10 @@ export function PostingDialog({ mode, loan, open, onClose, onPosted }) {
       ) : (
         <form id="posting-form" className="stack" onSubmit={submit} noValidate>
           {notice ? <Banner tone="warning" role="alert">{notice}</Banner> : null}
-          {!backdated ? <OutstandingSummary outstanding={outstanding} /> : (
-            <Banner tone="info">The amount due on {date} is worked out when you submit.</Banner>
-          )}
+          {collect && firstWeek ? <FirstWeekBanner outstanding={outstanding} /> : null}
+          <OutstandingSummary outstanding={outstanding} />
           <AmountField label={collect ? "Amount received" : "Additional principal"} value={amount} readOnly={uncertain}
             onChange={(e) => setAmount(e.target.value)} error={error} data-autofocus />
-          {user.is_head_office ? (
-            <DateField label="Date" optional value={date} max={today} readOnly={uncertain} onChange={(e) => setDate(e.target.value)}
-              hint="Leave empty for today. Past dates cannot be earlier than the loan's latest entry." />
-          ) : null}
         </form>
       )}
     </Modal>
@@ -239,9 +250,7 @@ export function CloseLoanDialog({ loan, open, onClose, onClosed }) {
       ) : (
         <form id="close-form" className="stack" onSubmit={submit} noValidate>
           <OutstandingSummary outstanding={quote} label="Closing amount" />
-          {daysBetween(loan.date, quote.as_of) + 1 < 7 ? (
-            <Banner tone="info">Loans closed within 7 days are charged a minimum of 7 days' interest.</Banner>
-          ) : null}
+          {quote.first_week ? <FirstWeekBanner outstanding={quote} closing /> : null}
           <AmountField label="Amount received" value={received} readOnly={uncertain}
             onChange={(e) => { setReceived(e.target.value); setError(""); }} error={error} data-autofocus />
           {shortfall ? (

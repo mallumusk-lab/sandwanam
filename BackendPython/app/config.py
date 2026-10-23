@@ -10,15 +10,26 @@ Optional:
   DOCS_ENABLED       "true" to serve /docs outside production
   TRUST_PROXY_HEADERS "true"/"false": use x-real-ip / x-forwarded-for for client addresses
                      (default: true on Vercel, which sets them itself; false elsewhere)
+Optional, for the nightly backup email (the app runs without them; email is then off):
+  SMTP_HOST          mail server, for example smtp.gmail.com
+  SMTP_PORT          587 (STARTTLS, default) or 465 (TLS); mail is never sent unencrypted
+  SMTP_USERNAME      login for the mail server (with SMTP_PASSWORD)
+  SMTP_PASSWORD      password or app password for SMTP_USERNAME
+  SMTP_FROM          sender address (defaults to SMTP_USERNAME when that is an address)
+  BACKUP_ZIP_PASSWORD 12-128 characters; the emailed ZIP is AES-256 encrypted with it
 """
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from functools import lru_cache
 from typing import Mapping
 
+from .domain import validation
+
 DEV_ORIGINS = ("http://localhost:5173", "http://127.0.0.1:5173")
+ZIP_PASSWORD_MIN = 12
+ZIP_PASSWORD_MAX = 128
 
 
 class ConfigError(RuntimeError):
@@ -34,6 +45,12 @@ class Settings:
     trusted_origins: tuple[str, ...]
     docs_enabled: bool
     trust_proxy_headers: bool = False
+    smtp_host: str | None = None
+    smtp_port: int | None = 587
+    smtp_username: str | None = None
+    smtp_password: str | None = field(default=None, repr=False)
+    smtp_from: str | None = None
+    backup_zip_password: str | None = field(default=None, repr=False)
 
     @property
     def is_production(self) -> bool:
@@ -44,6 +61,21 @@ class Settings:
         # The __Host- prefix makes browsers refuse the cookie unless it is Secure,
         # host-only and scoped to "/".
         return "__Host-sid" if self.cookie_secure else "sid"
+
+    def mail_missing(self) -> tuple[str, ...]:
+        """What the backup email still needs, in plain words (empty when it is ready)."""
+        missing = []
+        if not self.smtp_host:
+            missing.append("SMTP_HOST")
+        if self.smtp_port is None:
+            missing.append("SMTP_PORT (a port number such as 587)")
+        if bool(self.smtp_username) != bool(self.smtp_password):
+            missing.append("SMTP_PASSWORD" if self.smtp_username else "SMTP_USERNAME")
+        if not self.smtp_from:
+            missing.append("SMTP_FROM (the sender address)")
+        if not self.backup_zip_password:
+            missing.append(f"BACKUP_ZIP_PASSWORD ({ZIP_PASSWORD_MIN} to {ZIP_PASSWORD_MAX} characters)")
+        return tuple(missing)
 
 
 def load_settings(env: Mapping[str, str] | None = None) -> Settings:
@@ -85,7 +117,37 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
             raise ConfigError("CRON_SECRET must be at least 32 characters.")
         if not cookie_secure:
             raise ConfigError("COOKIE_SECURE cannot be disabled outside development.")
-    return Settings(environment, database_url, cron_secret, cookie_secure, trusted, docs, trust_proxy)
+    return Settings(environment, database_url, cron_secret, cookie_secure, trusted, docs, trust_proxy,
+                    **_mail_settings(env))
+
+
+def _mail_settings(env: Mapping[str, str]) -> dict:
+    """Optional mail settings. Bad values are left unset (reported by mail_missing), never fatal."""
+    def text(name: str) -> str | None:
+        value = (env.get(name) or "").strip()
+        return value or None
+
+    port_text = text("SMTP_PORT") or "587"
+    port = int(port_text) if port_text.isdigit() and 0 < int(port_text) < 65536 else None
+    username = text("SMTP_USERNAME")
+    sender = text("SMTP_FROM") or (username if username and "@" in username else None)
+    try:
+        sender = validation.email_recipient(sender) if sender else None
+    except validation.ValidationError:
+        sender = None
+    zip_password = env.get("BACKUP_ZIP_PASSWORD") or None
+    if zip_password is not None and not (
+        ZIP_PASSWORD_MIN <= len(zip_password) <= ZIP_PASSWORD_MAX and zip_password.isprintable()
+    ):
+        zip_password = None
+    return {
+        "smtp_host": text("SMTP_HOST"),
+        "smtp_port": port,
+        "smtp_username": username,
+        "smtp_password": env.get("SMTP_PASSWORD") or None,
+        "smtp_from": sender,
+        "backup_zip_password": zip_password,
+    }
 
 
 @lru_cache(maxsize=1)

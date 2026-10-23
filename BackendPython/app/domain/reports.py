@@ -12,6 +12,13 @@ Metric definitions (all amounts from the ledger, all periods in IST business day
 - closures             loans whose closed_at falls in the period
 - gold_pledged         net weight of loans created in the period
 - gold_released        net weight of loans closed in the period
+
+Follow-ups and overdue loans (approved 2026-10):
+- an open loan is overdue when today is after loan date + 365 days (its due date)
+- an open loan is due a follow-up on the date staff set, else on loan date + 364 days;
+  the automatic date is computed, never stored, so no data is backfilled
+- the dashboard lists a follow-up from 10 days before its date until it is done (changed 2026-10-23);
+  `follow_up_days` is the follow-up date minus today (negative once it has passed)
 """
 from __future__ import annotations
 
@@ -40,6 +47,9 @@ AGING_BUCKETS: tuple[tuple[int, int | None, str], ...] = (
     (91, None, "Over 90 days"),
 )
 _FORMULA_PREFIXES = ("=", "+", "-", "@", "\t", "\r")
+FOLLOW_UP_AFTER_DAYS = 364
+OVERDUE_AFTER_DAYS = 365
+FOLLOW_UP_NOTICE_DAYS = 10
 
 
 class PeriodError(ValueError):
@@ -66,6 +76,24 @@ def aging_bucket(days_since_payment: int) -> str:
         if days_since_payment >= low and (high is None or days_since_payment <= high):
             return label
     return AGING_BUCKETS[0][2]
+
+
+def default_follow_up(loan_date: date) -> date:
+    return loan_date + timedelta(days=FOLLOW_UP_AFTER_DAYS)
+
+
+def overdue_from(loan_date: date) -> date:
+    """The due date: a loan is overdue on any day after it."""
+    return loan_date + timedelta(days=OVERDUE_AFTER_DAYS)
+
+
+def effective_follow_up(stored: date | None, loan_date: date | None, is_open: bool) -> date | None:
+    """The follow-up date to act on: the stored one wins; open loans otherwise get the default."""
+    if not is_open:
+        return None
+    if stored is not None:
+        return stored
+    return default_follow_up(loan_date) if loan_date is not None else None
 
 
 def month_starts(today: date, count: int = 6) -> list[date]:

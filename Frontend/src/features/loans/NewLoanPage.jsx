@@ -1,28 +1,25 @@
 import { useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { customers, loans } from "../../api/endpoints.js";
-import { useAuth } from "../../auth/AuthContext.jsx";
 import { useAsync, useDocumentTitle } from "../../hooks/useAsync.js";
-import { todayIST } from "../../lib/dates.js";
 import { itemsError } from "../../lib/items.js";
 import { newRequestId } from "../../lib/ledger.js";
 import { amountError, formatGrams, normaliseAmount, subtract } from "../../lib/money.js";
 import { rateError, tenureError, weightErrors } from "../../lib/validation.js";
 import { Button } from "../../ui/controls.jsx";
 import { ErrorState, SkeletonRows, useToast } from "../../ui/feedback.jsx";
-import { AmountField, DateField, TextField, WeightField, focusFirstError } from "../../ui/fields.jsx";
+import { AmountField, TextField, WeightField, focusFirstError } from "../../ui/fields.jsx";
 import { Banner, Card, PageHeader } from "../../ui/surfaces.jsx";
 import { ItemsEditor } from "./ItemsEditor.jsx";
 
 export default function NewLoanPage() {
   const { customerId } = useParams();
-  const { user } = useAuth();
   const navigate = useNavigate();
   const toast = useToast();
   const customer = useAsync((signal) => customers.get(customerId, { signal }), [customerId]);
   useDocumentTitle("New loan");
   const [items, setItems] = useState([]);
-  const [form, setForm] = useState({ gross: "", deduction: "0", principal: "", rate: "", tenure: "12", date: "" });
+  const [form, setForm] = useState({ gross: "", deduction: "0", principal: "", rate: "", tenure: "12" });
   const [errors, setErrors] = useState({});
   const [pending, setPending] = useState(false);
   const [requestId] = useState(newRequestId);
@@ -60,11 +57,10 @@ export default function NewLoanPage() {
         principal: normaliseAmount(form.principal),
         rate: normaliseAmount(form.rate),
         tenure_months: Number(form.tenure),
-        loan_date: form.date && form.date !== todayIST() ? form.date : undefined,
         request_id: requestId,
       });
       toast.success("Loan created", `Loan ${created.loan_number} is open.`);
-      navigate(`/customers/${customerId}`, { replace: true, state: { createdLoan: created.loan_number } });
+      navigate(`/customers/${customerId}`, { replace: true });
     } catch (error) {
       if (error.status === 0) {
         setUncertain(true);
@@ -113,9 +109,6 @@ export default function NewLoanPage() {
             <TextField label="Interest rate" inputMode="decimal" suffix="% p.a." value={form.rate} onChange={set("rate")}
               error={errors.rate} hint="Annual rate. 18 % p.a. is 1.5 % a month." />
             <TextField label="Tenure" inputMode="numeric" suffix="months" value={form.tenure} onChange={set("tenure")} error={errors.tenure} />
-            {user.is_head_office ? (
-              <DateField label="Loan date" optional value={form.date} max={todayIST()} onChange={set("date")} hint="Leave empty for today." />
-            ) : null}
           </div>
         </Card>
         </fieldset>

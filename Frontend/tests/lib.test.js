@@ -5,9 +5,9 @@ import assert from "node:assert/strict";
 import { addDays, addMonths, daysBetween, formatDay, isValidDay, periodPreset, todayIST } from "../src/lib/dates.js";
 import { quote, dailyInterest, monthlyRate } from "../src/lib/interest.js";
 import { addItem, itemsError, itemsText, totalQuantity } from "../src/lib/items.js";
-import { entryAmount, entryLabel, newRequestId } from "../src/lib/ledger.js";
+import { CALCULATION_LABELS, calculationLabel, entryAmount, entryLabel, newRequestId } from "../src/lib/ledger.js";
 import { add, amountError, compare, formatINR, fromPaise, normaliseAmount, subtract, toPaise } from "../src/lib/money.js";
-import { CREATE, can, homePath } from "../src/lib/permissions.js";
+import { ALL_BRANCHES_LABEL, CREATE, FEATURES, can, homePath, isHeadOfficeStaff } from "../src/lib/permissions.js";
 import { passwordError, phoneError, rateError, tenureError, weightErrors } from "../src/lib/validation.js";
 
 test("money: exact paise arithmetic", () => {
@@ -94,4 +94,58 @@ test("permissions and ledger labels", () => {
   assert.equal(entryAmount({ kind: "compounding", principal_change: "12.00" }), "12.00");
   assert.notEqual(newRequestId(), newRequestId());
   assert.match(newRequestId(), /^[A-Za-z0-9-]{8,64}$/);
+});
+
+test("permissions: SuperAdmin has only what the server lists; head office staff have everything", () => {
+  const superadmin = { account_type: "superadmin", is_head_office: true, is_superadmin: true, permissions: ["newcustomer", "userlist"] };
+  const hq = { account_type: "hq", is_head_office: true, is_superadmin: false, permissions: [] };
+  for (const feature of ["analytics", "report", "history", "form1"]) {
+    assert.equal(can(superadmin, feature), false, feature);
+    assert.equal(can(hq, feature), true, feature);
+  }
+  assert.equal(can(superadmin, "userlist"), true);
+  assert.equal(can(superadmin, CREATE), true, "SuperAdmin adds customers and loans");
+  assert.equal(can({ ...superadmin, permissions: [] }, "userlist"), false);
+  assert.equal(homePath(superadmin), "/customers");
+  assert.equal(homePath(hq), "/");
+  assert.equal(homePath(null), "/login");
+  assert.equal(homePath({ is_head_office: false, permissions: ["form1"] }), "/tools/calculator");
+  assert.equal(homePath({ is_head_office: false, permissions: [] }), "/account");
+  assert.equal(isHeadOfficeStaff(hq), true);
+  assert.equal(isHeadOfficeStaff(superadmin), false);
+  assert.equal(isHeadOfficeStaff({ account_type: "branch" }), false);
+  assert.equal(isHeadOfficeStaff(null), false);
+  assert.equal(ALL_BRANCHES_LABEL, "Admin – all branches");
+  assert.equal(FEATURES.form1, "Loan calculator");
+});
+
+test("permissions: a branch with only the cash ledger or history import starts on that page", () => {
+  const branch = (permissions) => ({ account_type: "branch", is_head_office: false, permissions });
+  assert.equal(homePath(branch(["cashbook"])), "/cash", "not the account page");
+  assert.equal(homePath(branch(["cashbook", "history"])), "/cash");
+  assert.equal(homePath(branch(["history"])), "/history");
+  assert.equal(homePath(branch(["report", "cashbook"])), "/reports", "earlier choices are unchanged");
+  assert.equal(homePath(branch(["form1", "cashbook"])), "/tools/calculator");
+  assert.equal(homePath(branch([])), "/account");
+});
+
+test("permissions: the cash ledger is a branch feature; head office has it, SuperAdmin never does", () => {
+  assert.equal(FEATURES.cashbook, "Cash ledger");
+  assert.equal(can({ is_head_office: false, permissions: ["cashbook"] }, "cashbook"), true);
+  assert.equal(can({ is_head_office: false, permissions: ["userlist"] }, "cashbook"), false);
+  assert.equal(can({ account_type: "hq", is_head_office: true, is_superadmin: false, permissions: [] }, "cashbook"), true);
+  const superadmin = { account_type: "superadmin", is_head_office: true, is_superadmin: true, permissions: ["newcustomer", "userlist"] };
+  assert.equal(can(superadmin, "cashbook"), false);
+  // New branches start with every feature except history import, so the cash ledger is on by default.
+  const branches = readFileSync(join(process.cwd(), "src", "features", "admin", "BranchesPage.jsx"), "utf8");
+  assert.match(branches, /permissions: Object\.keys\(FEATURES\)\.filter\(\(key\) => key !== "history"\)/);
+  assert.ok(Object.keys(FEATURES).filter((key) => key !== "history").includes("cashbook"));
+});
+
+test("ledger: calculation method labels", () => {
+  for (const method of ["opening", "first_week", "first_week_settlement", "inclusive", "compounding", "writeoff", "legacy", "as_recorded"]) {
+    assert.equal(typeof CALCULATION_LABELS[method], "string", method);
+    assert.equal(calculationLabel(method), CALCULATION_LABELS[method]);
+  }
+  assert.equal(calculationLabel("something-new"), "As recorded");
 });

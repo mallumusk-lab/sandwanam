@@ -2,36 +2,32 @@ import { useEffect, useRef, useState } from "react";
 import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { branches as branchesApi } from "../api/endpoints.js";
 import { useAuth } from "../auth/AuthContext.jsx";
-import { ACCOUNT_LABELS, CREATE, can } from "../lib/permissions.js";
+import { ACCOUNT_LABELS, ALL_BRANCHES_LABEL, CREATE, can, isHeadOfficeStaff } from "../lib/permissions.js";
 import { IconButton, ThemeToggle } from "./controls.jsx";
 import { Icon } from "./Icon.jsx";
 import { useToast } from "./feedback.jsx";
 
 const NAV = [
   {
-    heading: "Daily work",
+    heading: "Branch operations",
     items: [
       { to: "/", label: "Dashboard", icon: "home", permission: "analytics", end: true },
       { to: "/customers", label: "Customers", icon: "users", permission: "userlist", end: true },
-      { to: "/customers/new", label: "New customer", icon: "userPlus", permission: CREATE },
+      // A SuperAdmin adds customers from the customer list; the menu keeps to their three areas.
+      { to: "/customers/new", label: "New customer", icon: "userPlus", permission: CREATE, notSuperadmin: true },
+      { to: "/cash", label: "Cash ledger", icon: "rupee", permission: "cashbook" },
       { to: "/reports", label: "Reports", icon: "file", permission: "report" },
       { to: "/history", label: "History import", icon: "clock", permission: "history" },
-    ],
-  },
-  {
-    heading: "Tools",
-    items: [
-      { to: "/tools/application-form", label: "Application form", icon: "clipboard", permission: "form1" },
       { to: "/tools/calculator", label: "Loan calculator", icon: "calculator", permission: "form1" },
     ],
   },
   {
     heading: "Head office",
     items: [
-      { to: "/settings", label: "Gold rate", icon: "sliders", headOffice: true },
+      { to: "/settings", label: "Gold rate", icon: "sliders", hq: true },
       { to: "/backup", label: "Backups", icon: "database", headOffice: true },
-      { to: "/audit", label: "Audit log", icon: "activity", headOffice: true },
-      { to: "/admin/branches", label: "Branches", icon: "shield", superadmin: true },
+      { to: "/audit", label: "Audit log", icon: "activity", hq: true },
+      { to: "/admin/branches", label: "Branches & Users", icon: "shield", superadmin: true },
     ],
   },
 ];
@@ -46,27 +42,42 @@ export function BrandMark() {
   );
 }
 
+/**
+ * Branches head office can pick. The head-office branch itself is left out: choosing
+ * ALL_BRANCHES_LABEL ("") already covers it, along with every other branch.
+ */
+export function branchOptions(list) {
+  return (list ?? []).filter((b) => !b.is_head_office);
+}
+
 function BranchPicker({ id }) {
   const { branch, setBranch } = useAuth();
   const toast = useToast();
   const [options, setOptions] = useState([]);
+  const current = useRef(branch);
+  current.current = branch;
   useEffect(() => {
     const controller = new AbortController();
     branchesApi
       .list({ signal: controller.signal })
-      .then(setOptions)
+      .then((list) => {
+        const choices = branchOptions(list);
+        setOptions(choices);
+        // A saved branch that no longer exists (or is the head-office branch) falls back to all branches.
+        if (current.current && !choices.some((b) => b.code === current.current)) setBranch("");
+      })
       .catch((error) => {
         if (!controller.signal.aborted) toast.error("Branches could not be loaded", error.message);
       });
     return () => controller.abort();
-  }, [toast]);
+  }, [toast, setBranch]);
   return (
     <div className="field">
       <label className="visually-hidden" htmlFor={id}>
         Branch shown
       </label>
       <select id={id} className="select branch-select" value={branch} onChange={(e) => setBranch(e.target.value)}>
-        <option value="">All branches</option>
+        <option value="">{ALL_BRANCHES_LABEL}</option>
         {options.map((b) => (
           <option key={b.code} value={b.code}>
             {b.name} ({b.code})
@@ -118,7 +129,9 @@ export function AppShell() {
   const visible = (item) =>
     (!item.permission || can(user, item.permission)) &&
     (!item.headOffice || user.is_head_office) &&
-    (!item.superadmin || user.is_superadmin);
+    (!item.hq || isHeadOfficeStaff(user)) &&
+    (!item.superadmin || user.is_superadmin) &&
+    (!item.notSuperadmin || !user.is_superadmin);
 
   const signOut = async () => {
     await logout();

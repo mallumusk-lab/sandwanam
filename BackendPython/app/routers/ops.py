@@ -10,6 +10,7 @@ from .. import db, logs
 from ..config import settings
 from ..domain.dates import now_utc
 from ..errors import Unauthorized
+from ..infra import mailer as backup_mailer
 from ..repositories import Repos
 from ..services import maintenance_service
 
@@ -39,6 +40,7 @@ async def daily(request: Request) -> dict:
     provided = request.headers.get("authorization", "")
     if not secret or not secrets.compare_digest(provided.encode(), f"Bearer {secret}".encode()):
         raise Unauthorized("Invalid cron credentials.", code="cron_unauthorized")
+    mailer, missing = backup_mailer.from_settings(settings())
     pool = await db.pool()
     async with pool.acquire(timeout=10) as connection:
-        return await maintenance_service.run_daily(Repos(connection), now_utc())
+        return await maintenance_service.run_daily(Repos(connection), now_utc(), mailer, mail_missing=missing)

@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Link, useLocation, useParams } from "react-router-dom";
+import { useParams } from "react-router-dom";
 import { customers } from "../../api/endpoints.js";
 import { useAuth } from "../../auth/AuthContext.jsx";
 import { useAsync, useDocumentTitle } from "../../hooks/useAsync.js";
@@ -9,6 +9,7 @@ import { CREATE, can } from "../../lib/permissions.js";
 import { Button } from "../../ui/controls.jsx";
 import { EmptyState, ErrorState, SkeletonRows } from "../../ui/feedback.jsx";
 import { Banner, Card, Details, LoanStatus, PageHeader } from "../../ui/surfaces.jsx";
+import { FollowUpDialog } from "../shared/FollowUpDialog.jsx";
 import { CloseLoanDialog, EditItemsDialog, PostingDialog } from "./LoanDialogs.jsx";
 
 function LoanCard({ loan, user, onAction }) {
@@ -35,7 +36,7 @@ function LoanCard({ loan, user, onAction }) {
           ["Loan amount", formatINR(loan.principal)],
           ["Interest rate", `${loan.rate} % p.a.`],
           ["Tenure", `${loan.tenure_months} months`],
-          loan.follow_up_date ? ["Follow-up", formatDay(loan.follow_up_date)] : null,
+          loan.follow_up_date ? ["Follow-up", `${formatDay(loan.follow_up_date)}${loan.follow_up_set ? "" : " (automatic)"}`] : null,
         ]}
       />
       {open && owed ? (
@@ -52,6 +53,7 @@ function LoanCard({ loan, user, onAction }) {
             {editable ? <Button size="sm" icon="plus" onClick={() => onAction("topup", loan)}>Add principal</Button> : null}
             {editable ? <Button size="sm" icon="edit" onClick={() => onAction("items", loan)}>Edit items</Button> : null}
             <Button size="sm" icon="check" onClick={() => onAction("close", loan)}>Close loan</Button>
+            {can(user, "userlist") ? <Button size="sm" icon="calendar" onClick={() => onAction("followup", loan)}>Follow-up</Button> : null}
           </>
         ) : null}
         <Button size="sm" variant="ghost" icon="printer" to={`/print/loan/${encodeURIComponent(loan.loan_number)}`}>Loan receipt</Button>
@@ -62,12 +64,10 @@ function LoanCard({ loan, user, onAction }) {
 
 export default function CustomerPage() {
   const { customerId } = useParams();
-  const location = useLocation();
   const { user } = useAuth();
   const { data, error, loading, reload } = useAsync((signal) => customers.get(customerId, { signal }), [customerId]);
   const [dialog, setDialog] = useState(null);
   useDocumentTitle(data?.customer.name ?? "Customer");
-  const created = location.state?.createdLoan;
 
   if (error && !data) {
     return (
@@ -103,11 +103,6 @@ export default function CustomerPage() {
             <p>{error.message} <Button size="sm" variant="ghost" icon="refresh" onClick={reload}>Try again</Button></p>
           </Banner>
         ) : null}
-        {created ? (
-          <Banner tone="success" title={`Loan ${created} created`}>
-            <p><Link to={`/print/loan/${encodeURIComponent(created)}`}>Print the loan receipt</Link> for the customer to sign.</p>
-          </Banner>
-        ) : null}
         <Card title="Contact">
           <Details items={[["Phone", customer.phone], ["Address", customer.address], ["Branch", customer.branch]]} />
         </Card>
@@ -131,6 +126,9 @@ export default function CustomerPage() {
       ) : null}
       {dialog?.type === "close" ? <CloseLoanDialog open loan={dialog.loan} onClose={close} onClosed={reload} /> : null}
       {dialog?.type === "items" ? <EditItemsDialog open loan={dialog.loan} onClose={close} onSaved={reload} /> : null}
+      {dialog?.type === "followup" ? (
+        <FollowUpDialog loan={{ ...dialog.loan, customer_name: customer.name, phone: customer.phone }} onClose={close} onSaved={reload} />
+      ) : null}
     </div>
   );
 }

@@ -7,11 +7,15 @@ from .. import logs
 from ..domain import dates
 from ..security import throttle
 from ..security.sessions import DEFAULT_POLICY
-from . import backup_service, loans_service, serialize
+from . import backup_email_service, cash_service, loans_service, serialize
 from .context import Actor
 
 
-async def run_daily(repos, now: datetime) -> dict:
+async def run_daily(repos, now: datetime, mailer=None, *, mail_missing: tuple[str, ...] = ()) -> dict:
+    """Compounding, the cash ledger (auto-close and 14-day purge), session and throttle
+    purges, then the nightly backup email (built in memory; nothing is stored). Neither a
+    cash ledger failure nor an email failure fails the job. `mailer` is None when email is
+    not set up on the server."""
     today = dates.business_date(now)
     rows = await repos.loans.open_with_position(None)
     due = [row["loan_number"] for row in rows if loans_service.due_for_compounding(row, today)]
@@ -22,10 +26,15 @@ async def run_daily(repos, now: datetime) -> dict:
         except Exception:  # one bad loan must not stop the rest; it is retried tomorrow
             failed.append(loan_number)
             logs.error("compounding_failed", loan_number=loan_number, exc_info=True)
-    snapshot = await backup_service.create_snapshot(repos, created_by="system", kind="scheduled", now=now)
+    try:
+        cash = await cash_service.auto_close_and_purge(repos, now)
+    except Exception:  # the drawer book is independent of loans; retried tomorrow
+        cash = {"cash_days_closed": None, "cash_days_purged": None}
+        logs.error("cash_ledger_failed", exc_info=True)
     await repos.sessions.purge_expired(now, now - DEFAULT_POLICY.idle)
     await repos.throttle.purge(now - timedelta(days=1), now, now - throttle.TRUST_PERIOD)
-    result = {"loans_checked": len(rows), "compoundings": applied, "failed": failed, "snapshot_id": snapshot["id"]}
+    result = {"loans_checked": len(rows), "compoundings": applied, "failed": failed, **cash}
+    result["backup_email"] = await backup_email_service.send_nightly(repos, mailer, now=now, missing=mail_missing)
     logs.info("daily_job", **result)
     return result
 

@@ -3,8 +3,9 @@
 Every write runs in one transaction holding a row lock on the loan, so concurrent
 postings (two cashiers, a double-click, the compounding cron) serialise. Each write:
   1. applies any compounding that has fallen due,
-  2. accrues interest once for the period,
+  2. accrues interest once for the period (first-7-days rule: app/domain/ledger.py),
   3. appends the entries and refreshes the cached balances on the loan.
+Daily entries are always dated today (IST); only history import records past dates.
 Requests carry a client request id; replaying one returns the original result.
 """
 from __future__ import annotations
@@ -14,10 +15,10 @@ from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from typing import Callable, Sequence
 
-from ..domain import dates, ledger, particulars, validation
-from ..domain.ledger import Entry, HistoryRow, LoanTerms, Position, Quote
+from ..domain import dates, ledger, particulars, statement_calc, validation
+from ..domain.ledger import Entry, LoanTerms, Position, Quote
 from ..domain.money import ZERO, AmountError, money, parse_amount
-from ..errors import Conflict, Forbidden, Invalid, NotFound
+from ..errors import Conflict, Invalid, NotFound
 from . import serialize
 from .context import Actor, ensure_visible
 
@@ -31,21 +32,28 @@ class NewLoan:
     principal: str
     rate: str
     tenure_months: int
-    loan_date: date | None = None
 
 
 def terms_of(loan: dict) -> LoanTerms:
     return LoanTerms.of(dates.business_date(loan["date"]), loan.get("interest"))
 
 
-def position_of(loan: dict, latest: dict | None, compoundings: int) -> Position:
+def position_of(loan: dict, latest: dict | None, totals: dict | None) -> Position:
+    """`totals` holds the ledger totals (repositories.loans.LEDGER_TOTALS)."""
+    totals = totals or {}
+    compoundings = int(totals.get("compoundings") or 0)
+    peak = max(money(loan.get("principle_amount")), money(totals.get("peak_principal")))
+    interest_paid = money(totals.get("interest_collected"))
     if latest is None:
-        return Position(dates.business_date(loan["date"]), money(loan["principle_amount"]), ZERO, compoundings)
+        return Position(dates.business_date(loan["date"]), money(loan["principle_amount"]), ZERO, compoundings,
+                        peak, interest_paid)
     return Position(
         dates.business_date(latest["date"]),
         money(latest.get("principlebalance") or 0),
         money(latest.get("interestbalance") or 0),
         compoundings,
+        peak,
+        interest_paid,
     )
 
 
@@ -58,7 +66,7 @@ def position_from_row(row: dict) -> Position:
             "principlebalance": row.get("last_principal"),
             "interestbalance": row.get("last_interest"),
         }
-    return position_of(row, latest, int(row.get("compoundings") or 0))
+    return position_of(row, latest, row)
 
 
 def live_quote(row: dict, today: date) -> Quote | None:
@@ -77,14 +85,9 @@ def _as_money(value: str):
         raise Invalid("The expected outstanding amount is not a number.", code="invalid_amount") from exc
 
 
-def resolve_entry_date(actor: Actor, requested: date | None, today: date) -> date:
-    if requested is None or requested == today:
-        return today
-    if requested > today:
-        raise Invalid("Entries cannot be dated in the future.", code="future_date")
-    if not actor.is_head_office:
-        raise Forbidden("Only head office can record an entry for a past date.")
-    return requested
+# A closing payment and its write-off are stored 1 µs apart (stamps_for); receipts treat an
+# addColl at most this far before a closing write-off as the same closing event.
+CLOSING_PAIR_GAP = timedelta(milliseconds=1)
 
 
 def stamps_for(entries: Sequence[Entry], previous_at: datetime | None, now: datetime) -> list[datetime]:
@@ -111,10 +114,16 @@ async def _load_visible(repos, actor: Actor, loan_number: str) -> dict:
 async def detail(repos, actor: Actor, loan_number: str, now: datetime) -> dict:
     actor.require("userlist")
     loan = await _load_visible(repos, actor, loan_number)
-    statements = await repos.statements.for_loan(loan["loan_number"])
+    statements = await repos.statements.for_loan(loan["loan_number"])  # newest first
+    terms = terms_of(loan)
+    oldest_first = list(reversed(statements))
+    calculations = statement_calc.explain(terms, oldest_first, opening=loan.get("principle_amount"))
+    by_id = {row["statementid"]: calc for row, calc in zip(oldest_first, calculations)}
     return {
         "loan": serialize.loan(loan, live_quote(loan, dates.business_date(now))),
-        "statements": [serialize.statement(row) for row in statements],
+        "statements": [
+            serialize.statement(row, by_id.get(row["statementid"]), loan_start=terms.start_date) for row in statements
+        ],
     }
 
 
@@ -123,20 +132,9 @@ async def closing_quote(repos, actor: Actor, loan_number: str, now: datetime) ->
     loan = await _load_visible(repos, actor, loan_number)
     if loan.get("loantype") != "open":
         raise Conflict("This loan is already closed.", code="loan_closed")
-    history = await repos.statements.history(loan["loan_number"])
     position = position_from_row(loan)
-    q = ledger.quote(
-        terms_of(loan),
-        position,
-        max(dates.business_date(now), position.as_of),
-        closing=True,
-        prior_days_charged=ledger.days_already_charged(_history_rows(history)),
-    )
+    q = ledger.quote(terms_of(loan), position, max(dates.business_date(now), position.as_of), closing=True)
     return serialize.quote(q)
-
-
-def _history_rows(rows: list[dict]) -> list[HistoryRow]:
-    return [HistoryRow(dates.business_date(r["date"]), r["transactiontype"], r.get("accrued_days")) for r in rows]
 
 
 async def _post(
@@ -145,7 +143,6 @@ async def _post(
     loan_number: str,
     build: Callable[[Quote], list[Entry]],
     *,
-    on: date | None,
     expected_total: str | None,
     request_id: str | None,
     now: datetime,
@@ -167,14 +164,9 @@ async def _post(
         raise Conflict("This loan is closed.", code="loan_closed")
 
     latest = await repos.statements.latest(loan["loan_number"])
-    compoundings = await repos.statements.compounding_count(loan["loan_number"])
-    position = position_of(loan, latest, compoundings)
-    as_of = resolve_entry_date(actor, on, dates.business_date(now))
-    prior_days = 0
-    if closing:
-        prior_days = ledger.days_already_charged(_history_rows(await repos.statements.history(loan["loan_number"])))
+    position = position_of(loan, latest, await repos.statements.totals(loan["loan_number"]))
     try:
-        q = ledger.quote(terms_of(loan), position, as_of, closing=closing, prior_days_charged=prior_days)
+        q = ledger.quote(terms_of(loan), position, dates.business_date(now), closing=closing)
     except ledger.LedgerError as exc:
         raise Invalid(exc.message, code=exc.code) from exc
     if expected_total is not None and _as_money(expected_total) != q.total:
@@ -237,7 +229,6 @@ async def collect(
     loan_number: str,
     *,
     amount: str,
-    on: date | None,
     expected_total: str | None,
     request_id: str,
     now: datetime,
@@ -247,7 +238,7 @@ async def collect(
     async with repos.transaction():
         loan, entries, statement_id, _, replayed = await _post(
             repos, actor, loan_number, lambda q: [ledger.collect(q, amount)],
-            on=on, expected_total=expected_total, request_id=request_id, now=now,
+            expected_total=expected_total, request_id=request_id, now=now,
         )
         if not replayed:
             payment = entries[-1]
@@ -265,7 +256,6 @@ async def top_up(
     loan_number: str,
     *,
     amount: str,
-    on: date | None,
     expected_total: str | None,
     request_id: str,
     now: datetime,
@@ -275,7 +265,7 @@ async def top_up(
     async with repos.transaction():
         loan, entries, statement_id, _, replayed = await _post(
             repos, actor, loan_number, lambda q: [ledger.top_up(q, amount)],
-            on=on, expected_total=expected_total, request_id=request_id, now=now,
+            expected_total=expected_total, request_id=request_id, now=now,
         )
         if not replayed:
             await _audit(repos, actor, "TOP_UP", loan["loan_number"], f"Added principal {entries[-1].current_principal}", context)
@@ -299,7 +289,7 @@ async def close(
         loan, entries, statement_id, at_values, replayed = await _post(
             repos, actor, loan_number,
             lambda q: ledger.close(q, amount_received, write_off_remaining=write_off_remaining),
-            on=None, expected_total=expected_total, request_id=request_id, now=now, closing=True,
+            expected_total=expected_total, request_id=request_id, now=now, closing=True,
         )
         if not replayed:
             closed_at = at_values[-1] if at_values else dates.business_datetime(dates.business_date(now), now)
@@ -359,7 +349,7 @@ async def create(repos, actor: Actor, data: NewLoan, *, request_id: str, now: da
         tenure = validation.tenure(data.tenure_months)
     except (particulars.ItemsError, validation.ValidationError, AmountError) as exc:
         raise Invalid(str(exc), code="invalid_loan", details={"field": getattr(exc, "field", "items")}) from exc
-    as_of = resolve_entry_date(actor, data.loan_date, dates.business_date(now))
+    as_of = dates.business_date(now)
 
     async with repos.transaction():
         customer = await repos.customers.lock(data.customer_id)
@@ -418,7 +408,7 @@ async def apply_due_compounding(repos, loan_number: str, now: datetime) -> int:
         if loan is None or loan.get("loantype") != "open":
             return 0
         latest = await repos.statements.latest(loan_number)
-        position = position_of(loan, latest, await repos.statements.compounding_count(loan_number))
+        position = position_of(loan, latest, await repos.statements.totals(loan_number))
         today = max(dates.business_date(now), position.as_of)
         entries, _ = ledger.due_compoundings(terms_of(loan), position, today)
         if not entries:

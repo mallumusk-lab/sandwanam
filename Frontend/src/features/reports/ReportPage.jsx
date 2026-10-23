@@ -5,6 +5,7 @@ import { useAsync, useDocumentTitle, useSubmit } from "../../hooks/useAsync.js";
 import { formatDay, periodPreset, todayIST } from "../../lib/dates.js";
 import { ENTRY_LABELS, entryAmount, entryLabel } from "../../lib/ledger.js";
 import { formatINR } from "../../lib/money.js";
+import { ALL_BRANCHES_LABEL } from "../../lib/permissions.js";
 import { Button, Pagination, Segmented } from "../../ui/controls.jsx";
 import { DataTable } from "../../ui/DataTable.jsx";
 import { EmptyState, ErrorState, SkeletonRows, useToast } from "../../ui/feedback.jsx";
@@ -103,7 +104,7 @@ export default function ReportPage() {
           <p className="print-only">
             {ENTRY_LABELS[kind] ?? "All entries"}
             {search ? ` · Search: “${search}”` : ""}
-            {` · Branch: ${branch || "all branches"}`}
+            {` · Branch: ${branch || ALL_BRANCHES_LABEL}`}
           </p>
           <div className="cluster no-print">
             <Segmented label="Period" options={PRESETS} value={preset} onChange={setPreset} />

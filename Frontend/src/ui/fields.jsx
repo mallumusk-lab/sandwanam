@@ -1,4 +1,4 @@
-import { forwardRef, useId } from "react";
+import { forwardRef, useId, useState } from "react";
 import { Icon } from "./Icon.jsx";
 
 function describedBy(...ids) {
@@ -73,6 +73,39 @@ export const WeightField = forwardRef(function WeightField(props, ref) {
 
 export const DateField = forwardRef(function DateField(props, ref) {
   return <TextField ref={ref} type="date" {...props} />;
+});
+
+export const PasswordField = forwardRef(function PasswordField(
+  { id, label, hint, error, optional, className = "", ...input },
+  ref,
+) {
+  const [visible, setVisible] = useState(false);
+  const { fieldId, aria } = useFieldIds(id, hint, error);
+  return (
+    <FieldShell id={fieldId} label={label} hint={hint} error={error} optional={optional} className={className}>
+      <div className="input-action-wrap">
+        <input
+          ref={ref}
+          id={fieldId}
+          type={visible ? "text" : "password"}
+          className="input"
+          required={!optional || undefined}
+          {...aria}
+          {...input}
+        />
+        <button
+          type="button"
+          className="input-action-btn"
+          aria-label={visible ? "Hide password" : "Show password"}
+          title={visible ? "Hide password" : "Show password"}
+          aria-pressed={visible}
+          onClick={() => setVisible((v) => !v)}
+        >
+          <Icon name={visible ? "eyeOff" : "eye"} />
+        </button>
+      </div>
+    </FieldShell>
+  );
 });
 
 export const SelectField = forwardRef(function SelectField(

@@ -54,3 +54,12 @@ export function passwordError(password, username = "") {
   if (username && password.toLowerCase().includes(username.toLowerCase())) return "Don't include your username.";
   return "";
 }
+
+// One address only (mirrors domain/validation.email_recipient), so a typo can't fan out.
+const EMAIL_PATTERN = /^[A-Za-z0-9!#$%&'*+/=?^_`{|}~-]+(?:\.[A-Za-z0-9!#$%&'*+/=?^_`{|}~-]+)*@(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)+[A-Za-z]{2,63}$/;
+
+export function emailError(value) {
+  const text = String(value ?? "").trim();
+  const ok = text.length > 0 && text.length <= 254 && EMAIL_PATTERN.test(text) && text.split("@")[0].length <= 64;
+  return ok ? "" : "Enter one email address, for example backups@example.com.";
+}

@@ -4,8 +4,8 @@ import { useAuth } from "../../auth/AuthContext.jsx";
 import { useDocumentTitle } from "../../hooks/useAsync.js";
 import { homePath } from "../../lib/permissions.js";
 import { BrandMark } from "../../ui/AppShell.jsx";
-import { Button, IconButton, ThemeToggle } from "../../ui/controls.jsx";
-import { TextField } from "../../ui/fields.jsx";
+import { Button, ThemeToggle } from "../../ui/controls.jsx";
+import { PasswordField, TextField } from "../../ui/fields.jsx";
 import { Banner, Card } from "../../ui/surfaces.jsx";
 
 export default function LoginPage() {
@@ -15,7 +15,6 @@ export default function LoginPage() {
   const location = useLocation();
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
-  const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState(null);
   const [pending, setPending] = useState(false);
 
@@ -66,24 +65,13 @@ export default function LoginPage() {
               onChange={(e) => setUsername(e.target.value)}
               autoFocus
             />
-            <div className="stack stack-sm">
-              <TextField
-                label="Password"
-                name="password"
-                type={showPassword ? "text" : "password"}
-                autoComplete="current-password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-              />
-              <div className="cluster cluster-end">
-                <IconButton
-                  icon={showPassword ? "eyeOff" : "eye"}
-                  label="Show password"
-                  aria-pressed={showPassword}
-                  onClick={() => setShowPassword((v) => !v)}
-                />
-              </div>
-            </div>
+            <PasswordField
+              label="Password"
+              name="password"
+              autoComplete="current-password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+            />
             <Button type="submit" variant="primary" block loading={pending}>
               Sign in
             </Button>

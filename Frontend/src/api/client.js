@@ -111,18 +111,23 @@ export const api = {
   del: (path, options) => request(path, { ...options, method: "DELETE" }),
 };
 
+/** Save a file made in the browser (or downloaded) under `name`, through a temporary blob link. */
+export function saveBlob(blob, name) {
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = name;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 10000);
+}
+
 /** Download a file response (CSV, backup) without putting anything sensitive in the URL bar. */
 export async function download(path, query, fallbackName) {
   const response = await request(path, { query, raw: true, timeout: 120000 });
   const disposition = response.headers.get("content-disposition") ?? "";
   const match = /filename="([^"]+)"/.exec(disposition);
   const blob = await response.blob();
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement("a");
-  link.href = url;
-  link.download = match?.[1] ?? fallbackName;
-  document.body.appendChild(link);
-  link.click();
-  link.remove();
-  setTimeout(() => URL.revokeObjectURL(url), 10000);
+  saveBlob(blob, match?.[1] ?? fallbackName);
 }

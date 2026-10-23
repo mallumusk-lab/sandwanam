@@ -1,21 +1,39 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
-import { dashboard, loans } from "../../api/endpoints.js";
+import { dashboard } from "../../api/endpoints.js";
 import { useAuth } from "../../auth/AuthContext.jsx";
 import { useAsync, useDocumentTitle } from "../../hooks/useAsync.js";
-import { addDays, formatDateTime, formatDay, todayIST } from "../../lib/dates.js";
+import { formatDateTime, formatDay } from "../../lib/dates.js";
 import { entryLabel } from "../../lib/ledger.js";
 import { formatGrams, formatINR } from "../../lib/money.js";
-import { can } from "../../lib/permissions.js";
+import { ALL_BRANCHES_LABEL, can } from "../../lib/permissions.js";
 import { BarList, ColumnChart } from "../../ui/charts.jsx";
-import { Button } from "../../ui/controls.jsx";
+import { Button, Pagination } from "../../ui/controls.jsx";
 import { DataTable } from "../../ui/DataTable.jsx";
-import { EmptyState, ErrorState, SkeletonRows, useToast } from "../../ui/feedback.jsx";
-import { DateField } from "../../ui/fields.jsx";
-import { Modal } from "../../ui/Modal.jsx";
+import { EmptyState, ErrorState, SkeletonRows } from "../../ui/feedback.jsx";
 import { Banner, Card, PageHeader, Pill } from "../../ui/surfaces.jsx";
+import { FollowUpDialog, followUpStatus } from "../shared/FollowUpDialog.jsx";
 import { CustomerLink } from "../shared/links.jsx";
 import { PerformancePanel } from "./PerformancePanel.jsx";
+
+const PAGE_SIZE = 50;
+
+/** Every row the server sends, 50 to a page, so no follow-up or overdue loan is left out. */
+function PagedTable({ rows, label, ...table }) {
+  const [page, setPage] = useState(1);
+  const current = Math.min(page, Math.max(1, Math.ceil(rows.length / PAGE_SIZE)));
+  return (
+    <>
+      <DataTable {...table} rows={rows.slice((current - 1) * PAGE_SIZE, current * PAGE_SIZE)} />
+      {rows.length > PAGE_SIZE ? <Pagination page={current} pageSize={PAGE_SIZE} total={rows.length} onPage={setPage} label={label} /> : null}
+    </>
+  );
+}
+
+function FollowUpPill({ days }) {
+  const { label, tone } = followUpStatus(days);
+  return <Pill tone={tone}>{label}</Pill>;
+}
 
 function Kpi({ label, value, meta }) {
   return (
@@ -24,38 +42,6 @@ function Kpi({ label, value, meta }) {
       <span className="kpi-value">{value}</span>
       {meta ? <span className="kpi-meta">{meta}</span> : null}
     </div>
-  );
-}
-
-function FollowUpDialog({ loan, onClose, onSaved }) {
-  const toast = useToast();
-  const [date, setDate] = useState(loan.follow_up_date ?? addDays(todayIST(), 7));
-  const [error, setError] = useState("");
-  const [pending, setPending] = useState(false);
-  const save = async (value) => {
-    setPending(true);
-    try {
-      await loans.setFollowUp(loan.loan_number, value);
-      toast.success(value ? "Follow-up scheduled" : "Follow-up cleared", `${loan.customer_name} · ${loan.loan_number}`);
-      onSaved();
-      onClose();
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setPending(false);
-    }
-  };
-  return (
-    <Modal open onClose={onClose} busy={pending} title={`Follow up · ${loan.loan_number}`}
-      description={`${loan.customer_name}, ${loan.phone}. Due ${formatDay(loan.due_date)}.`}
-      footer={
-        <>
-          {loan.follow_up_date ? <Button onClick={() => save(null)} disabled={pending}>Clear follow-up</Button> : null}
-          <Button variant="primary" loading={pending} onClick={() => (date ? save(date) : setError("Choose a date."))}>Save</Button>
-        </>
-      }>
-      <DateField label="Next follow-up" value={date} min={todayIST()} onChange={(e) => setDate(e.target.value)} error={error} data-autofocus />
-    </Modal>
   );
 }
 
@@ -69,7 +55,7 @@ export default function DashboardPage() {
   if (!data) return <div className="page"><SkeletonRows rows={8} label="Loading dashboard" /></div>;
 
   const { portfolio, today, trends, recent, counts } = data;
-  const scope = branch ? `Branch ${branch}` : user.is_head_office ? "All branches" : `Branch ${user.branch}`;
+  const scope = branch ? `Branch ${branch}` : user.is_head_office ? ALL_BRANCHES_LABEL : `Branch ${user.branch}`;
 
   const overdueColumns = [
     { key: "loan_number", header: "Loan", render: (l) => <CustomerLink customerId={l.customer_id}>{l.loan_number}</CustomerLink> },
@@ -82,13 +68,46 @@ export default function DashboardPage() {
       header: "Follow-up",
       render: (l) => (
         <span className="cluster cluster-sm">
-          {l.followed_up ? <Pill tone="info">{formatDay(l.follow_up_date)}</Pill> : <Pill tone="warning">Not scheduled</Pill>}
+          {l.follow_up_set ? (
+            <>
+              <span>{formatDay(l.follow_up_date)}</span>
+              <FollowUpPill days={l.follow_up_days} />
+            </>
+          ) : <Pill tone="warning">Not scheduled</Pill>}
           {can(user, "userlist") ? (
-            <Button size="sm" variant="ghost" onClick={() => setFollowUp(l)}>{l.followed_up ? "Change" : "Schedule"}</Button>
+            <Button size="sm" variant="ghost" onClick={() => setFollowUp(l)}>{l.follow_up_set ? "Change" : "Schedule"}</Button>
           ) : null}
         </span>
       ),
     },
+  ];
+  const followUps = portfolio.follow_ups ?? [];
+  const followUpColumns = [
+    { key: "loan_number", header: "Loan", render: (l) => <CustomerLink customerId={l.customer_id}>{l.loan_number}</CustomerLink> },
+    { key: "customer_name", header: "Customer" },
+    { key: "phone", header: "Phone", render: (l) => <a href={`tel:${l.phone}`} className="num">{l.phone}</a> },
+    {
+      key: "follow_up_date",
+      header: "Follow-up date",
+      render: (l) => (
+        <span className="cluster cluster-sm">
+          <span>{`${formatDay(l.follow_up_date)}${l.follow_up_set ? "" : " (automatic)"}`}</span>
+          <FollowUpPill days={l.follow_up_days} />
+        </span>
+      ),
+    },
+    { key: "total", header: "Due today", numeric: true, render: (l) => formatINR(l.total) },
+    ...(can(user, "userlist")
+      ? [{
+          key: "change",
+          header: <span className="visually-hidden">Change follow-up</span>,
+          render: (l) => (
+            <Button size="sm" variant="ghost" onClick={() => setFollowUp(l)}>
+              Change<span className="visually-hidden"> follow-up for {l.loan_number}</span>
+            </Button>
+          ),
+        }]
+      : []),
   ];
 
   return (
@@ -143,10 +162,16 @@ export default function DashboardPage() {
           </Card>
         ) : null}
 
+        <Card title={`Follow-ups due (${followUps.length})`}>
+          <PagedTable columns={followUpColumns} rows={followUps} rowKey={(l) => l.loan_number} label="Follow-up pages"
+            caption={`Open loans with a follow-up in the next ${portfolio.follow_up_notice_days} days or already passed, earliest first`}
+            empty={<EmptyState icon="checkCircle" title="No follow-ups due">No open loan has a follow-up in the next {portfolio.follow_up_notice_days} days.</EmptyState>} />
+        </Card>
+
         <Card title={`Overdue loans (${portfolio.overdue.length})`}>
-          <DataTable columns={overdueColumns} rows={portfolio.overdue.slice(0, 50)} rowKey={(l) => l.loan_number}
-            caption="Loans past their tenure, not yet scheduled first"
-            empty={<EmptyState icon="checkCircle" title="No overdue loans">Every open loan is within its tenure.</EmptyState>} />
+          <PagedTable columns={overdueColumns} rows={portfolio.overdue} rowKey={(l) => l.loan_number} label="Overdue loan pages"
+            caption="Loans open for more than 365 days"
+            empty={<EmptyState icon="checkCircle" title="No overdue loans">No open loan is older than 365 days.</EmptyState>} />
         </Card>
 
         <Card title="Recent activity">

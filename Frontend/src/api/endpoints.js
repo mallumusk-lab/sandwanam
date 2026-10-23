@@ -58,11 +58,20 @@ export const settings = {
 };
 
 export const backup = {
-  snapshots: (options) => api.get("/backup/snapshots", options),
-  createSnapshot: () => api.post("/backup/snapshots"),
-  downloadSnapshot: (id) => download(`/backup/snapshots/${enc(id)}/download`, null, `backup_${id}.json`),
-  exportLive: () => download("/backup/export", null, "backup.json"),
+  check: (body) => api.post("/backup/check", body, { timeout: 120000 }),
   restore: (body) => api.post("/backup/restore", body, { timeout: 120000 }),
+  emailSettings: (options) => api.get("/backup/email", options),
+  setEmail: (body) => api.put("/backup/email", body),
+  sendNow: () => api.post("/backup/email/send", undefined, { timeout: 120000 }),
+};
+
+export const cash = {
+  overview: (branch, options) => api.get("/cash", { ...options, query: { branch } }),
+  startDay: (body) => api.post("/cash/days", body),
+  addEntry: (dayId, body) => api.post(`/cash/days/${enc(dayId)}/entries`, body),
+  voidEntry: (entryId, reason) => api.post(`/cash/entries/${enc(entryId)}/void`, { reason }),
+  closeDay: (dayId, body) => api.post(`/cash/days/${enc(dayId)}/close`, body),
+  reopenDay: (dayId) => api.post(`/cash/days/${enc(dayId)}/reopen`),
 };
 
 export const admin = {

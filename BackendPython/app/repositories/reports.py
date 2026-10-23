@@ -89,8 +89,8 @@ for _metric in ("interest_collected", "principal_collected", "total_collected"):
 
 TRANSACTIONS = """
 SELECT s.statementid, s.loan_number, s.transactiontype, s.date, s.amountpaid, s.currentprincipal, s.currentinterest,
-       s.principlebalance, s.interestbalance, s.writeoff_principal, s.writeoff_interest,
-       c.customername, c.user_id, c.branch_prefix,
+       s.principlebalance, s.interestbalance, s.writeoff_principal, s.writeoff_interest, s.created_at,
+       l.date AS loan_date, c.customername, c.user_id, c.branch_prefix,
        COUNT(*) OVER () AS total
 FROM statement s
 JOIN loan_data l ON l.loan_number = s.loan_number
