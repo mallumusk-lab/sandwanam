@@ -134,6 +134,7 @@ class EveryRepositoryMethod(unittest.TestCase):
                                 writeoff_interest=None, created_by="u", request_id="r"))
         run(r.statements.for_loan("SAN1L1"))
         run(r.statements.get(1))
+        run(r.statements.total_written_off("SAN"))
         lock_sql = next(sql for sql, _ in self.conn.calls if "FOR UPDATE OF l" in sql)
         self.assertIn("WHERE l.loan_number = $1", lock_sql)
 

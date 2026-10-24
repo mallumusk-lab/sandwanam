@@ -347,6 +347,60 @@ test("calculation lines only format the server's figures", () => {
   ]);
 });
 
+test("statement: letterhead and title bar are print-only, page header is no-print", () => {
+  const src = readFileSync(join(process.cwd(), "src", "features", "loans", "StatementPage.jsx"), "utf8");
+  assert.match(src, /<div className="print-only">\s*<StatementHeader/);
+  assert.match(src, /className="statement-topbar no-print"/);
+  assert.match(src, /<h1 className="statement-topbar-title">Statement<\/h1>/);
+  assert.match(src, /className="statement-back-circle"/);
+  assert.match(src, /<span>Back<\/span>/);
+});
+
+test("statement: ledger table date keeps day and month together to consume at most two lines", () => {
+  const src = readFileSync(join(process.cwd(), "src", "features", "loans", "StatementPage.jsx"), "utf8");
+  assert.match(src, /table-date-cell/);
+  assert.match(src, /datePart/);
+  assert.match(src, /table-entry-cell/);
+});
+
+
+test("customer: topbar has circled back arrow and customer card has statement layout", () => {
+  const src = readFileSync(join(process.cwd(), "src", "features", "customers", "CustomerPage.jsx"), "utf8");
+  assert.match(src, /className="statement-topbar customer-topbar"/);
+  assert.match(src, /<h1 className="statement-topbar-title">Customer<\/h1>/);
+  assert.match(src, /className="statement-card customer-card"/);
+  assert.match(src, /className="statement-avatar"/);
+  assert.match(src, /<h2 className="statement-badge-val">\{customer\.name\}<\/h2>/);
+  assert.match(src, /<h3 className="statement-card-title">Customer details<\/h3>/);
+});
+
+test("report: transaction table has index, date with time, description badge, debit, credit and net totals", () => {
+  const src = readFileSync(join(process.cwd(), "src", "features", "reports", "ReportPage.jsx"), "utf8");
+  assert.match(src, /header:\s*"#"/);
+  assert.match(src, /header:\s*"Date"/);
+  assert.match(src, /header:\s*"Transaction description"/);
+  assert.match(src, /header:\s*"Debit \(out\)"/);
+  assert.match(src, /header:\s*"Credit \(in\)"/);
+  assert.match(src, /className="report-net-totals"/);
+  assert.match(src, /footer=\{footer\}/);
+});
+
+test("dashboard: portfolio cards show overdue loans, write-off amount, net vs gross weight, and find customer is removed", () => {
+  const src = readFileSync(join(process.cwd(), "src", "features", "dashboard", "DashboardPage.jsx"), "utf8");
+  assert.doesNotMatch(src, /Collected today/);
+  assert.doesNotMatch(src, /Disbursed today/);
+  assert.doesNotMatch(src, /Find a customer/);
+  assert.match(src, /label="Overdue loans"/);
+  assert.match(src, /label="Write-off amount"/);
+  assert.match(src, /Net .* vs Gross/);
+  assert.doesNotMatch(src, /LTV/);
+});
+
+test("customers: branch column is shown for head office admin and hidden for individual branch staff", () => {
+  const src = readFileSync(join(process.cwd(), "src", "features", "customers", "CustomerListPage.jsx"), "utf8");
+  assert.match(src, /user\?\.is_head_office \? \[\{\s*key:\s*"branch",\s*header:\s*"Branch"\s*\}\] : \[\]/);
+});
+
 test("first-week banners show the server's amounts", () => {
   const outstanding = { first_week: true, window_peak: "120000.00", first_week_interest: "414.25" };
   const posting = renderToStaticMarkup(<FirstWeekBanner outstanding={outstanding} />);

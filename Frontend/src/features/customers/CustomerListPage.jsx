@@ -38,7 +38,7 @@ export default function CustomerListPage() {
     { key: "customer_number", header: "Customer no.", render: (c) => <Link className="row-link" to={`/customers/${c.id}`}>{c.customer_number}</Link> },
     { key: "name", header: "Name" },
     { key: "phone", header: "Phone", render: (c) => <span className="num">{c.phone}</span> },
-    { key: "branch", header: "Branch" },
+    ...(user?.is_head_office ? [{ key: "branch", header: "Branch" }] : []),
     {
       key: "open_loans",
       header: "Loans",

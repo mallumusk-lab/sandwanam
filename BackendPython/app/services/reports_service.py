@@ -55,7 +55,7 @@ async def portfolio(repos, actor: Actor, branch: str | None, now: datetime) -> d
     rate_info = await gold_rate(repos)
     rate = Decimal(rate_info["per_gram"]) if rate_info else None
 
-    principal = interest = weight = ZERO
+    principal = interest = weight = gross_weight = ZERO
     aging: dict[str, int] = {label: 0 for _, _, label in reports.AGING_BUCKETS}
     by_branch: dict[str, dict] = defaultdict(lambda: {"loans": 0, "principal": ZERO, "interest": ZERO})
     overdue, follow_ups, inactive, loans = [], [], [], []
@@ -64,9 +64,11 @@ async def portfolio(repos, actor: Actor, branch: str | None, now: datetime) -> d
         if q is None:
             continue
         net = row.get("net_weight") or ZERO
+        gross = row.get("weight") or net or ZERO
         principal += q.principal
         interest += q.interest
         weight += net
+        gross_weight += gross
         last_payment = dates.business_date(row["last_payment_at"]) if row.get("last_payment_at") else terms_of(row).start_date
         idle_days = max(0, (today - last_payment).days)
         aging[reports.aging_bucket(idle_days)] += 1
@@ -93,6 +95,7 @@ async def portfolio(repos, actor: Actor, branch: str | None, now: datetime) -> d
             "interest": serialize.money(q.interest),
             "total": serialize.money(q.total),
             "net_weight": serialize.money(net),
+            "gross_weight": serialize.money(gross),
             "ltv": _ltv(q.total, net, rate),
             "follow_up_date": follow_up_date,
             "follow_up_set": follow_up_set,
@@ -112,6 +115,9 @@ async def portfolio(repos, actor: Actor, branch: str | None, now: datetime) -> d
     inactive.sort(key=lambda e: -e["days_since_payment"])
     loans.sort(key=lambda e: -Decimal(e["total"]))
     names = {b["branch_prefix"]: b.get("display_name") or b["username"] for b in await repos.users.branches()}
+    overdue_principal = sum((money(e["principal"]) for e in overdue), ZERO)
+    overdue_total = sum((money(e["total"]) for e in overdue), ZERO)
+    writeoff_info = await repos.statements.total_written_off(scope.branch) if hasattr(repos, "statements") and hasattr(repos.statements, "total_written_off") else {"amount": ZERO, "count": 0}
     return {
         "as_of": today.isoformat(),
         "open_loans": len(loans),
@@ -119,8 +125,13 @@ async def portfolio(repos, actor: Actor, branch: str | None, now: datetime) -> d
         "interest": serialize.money(interest),
         "total": serialize.money(principal + interest),
         "net_weight": serialize.money(weight),
+        "gross_weight": serialize.money(gross_weight),
         "ltv": _ltv(principal + interest, weight, rate),
         "gold_rate": rate_info,
+        "written_off": serialize.money(writeoff_info["amount"]),
+        "written_off_count": writeoff_info["count"],
+        "overdue_principal": serialize.money(overdue_principal),
+        "overdue_total": serialize.money(overdue_total),
         "aging": [{"bucket": label, "loans": count} for label, count in aging.items()],
         "branches": [
             {"code": code, "name": names.get(code, code), "loans": t["loans"],

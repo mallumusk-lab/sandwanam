@@ -5,7 +5,7 @@ import { useAuth } from "../../auth/AuthContext.jsx";
 import { useAsync, useDocumentTitle } from "../../hooks/useAsync.js";
 import { formatDateTime, formatDay } from "../../lib/dates.js";
 import { entryLabel } from "../../lib/ledger.js";
-import { formatGrams, formatINR } from "../../lib/money.js";
+import { formatGrams, formatINR, fromPaise, toPaise } from "../../lib/money.js";
 import { ALL_BRANCHES_LABEL, can } from "../../lib/permissions.js";
 import { BarList, ColumnChart } from "../../ui/charts.jsx";
 import { Button, Pagination } from "../../ui/controls.jsx";
@@ -54,14 +54,14 @@ export default function DashboardPage() {
   if (error) return <div className="page"><ErrorState error={error} onRetry={reload} /></div>;
   if (!data) return <div className="page"><SkeletonRows rows={8} label="Loading dashboard" /></div>;
 
-  const { portfolio, today, trends, recent, counts } = data;
+  const { portfolio, trends, recent, counts } = data;
   const scope = branch ? `Branch ${branch}` : user.is_head_office ? ALL_BRANCHES_LABEL : `Branch ${user.branch}`;
 
   const overdueColumns = [
     { key: "loan_number", header: "Loan", render: (l) => <CustomerLink customerId={l.customer_id}>{l.loan_number}</CustomerLink> },
     { key: "customer_name", header: "Customer" },
     { key: "phone", header: "Phone", render: (l) => <a href={`tel:${l.phone}`} className="num">{l.phone}</a> },
-    { key: "due_date", header: "Due", render: (l) => `${formatDay(l.due_date)} (${l.days_overdue} days ago)` },
+    { key: "due_date", header: "Due", className: "cell-nowrap", render: (l) => `${formatDay(l.due_date)} (${l.days_overdue} days ago)` },
     { key: "total", header: "Due today", numeric: true, render: (l) => formatINR(l.total) },
     {
       key: "follow",
@@ -89,8 +89,9 @@ export default function DashboardPage() {
     {
       key: "follow_up_date",
       header: "Follow-up date",
+      className: "cell-nowrap",
       render: (l) => (
-        <span className="cluster cluster-sm">
+        <span className="cluster cluster-sm cell-nowrap">
           <span>{`${formatDay(l.follow_up_date)}${l.follow_up_set ? "" : " (automatic)"}`}</span>
           <FollowUpPill days={l.follow_up_days} />
         </span>
@@ -110,10 +111,14 @@ export default function DashboardPage() {
       : []),
   ];
 
+  const overdueTotal = portfolio.overdue_total
+    ? portfolio.overdue_total
+    : fromPaise((portfolio.overdue ?? []).reduce((acc, l) => acc + toPaise(l.total), 0n));
+  const grossWeight = portfolio.gross_weight ?? portfolio.net_weight;
+
   return (
     <div className="page" aria-busy={loading}>
-      <PageHeader title="Dashboard" description={`${scope} · as of ${formatDay(portfolio.as_of)}`}
-        actions={can(user, "userlist") ? <Button icon="search" to="/customers">Find a customer</Button> : null} />
+      <PageHeader title="Dashboard" description={`${scope} · as of ${formatDay(portfolio.as_of)}`} />
       <div className="stack stack-lg">
         {!portfolio.gold_rate && user.is_head_office ? (
           <Banner tone="warning" title="Today's gold rate isn't set">
@@ -127,9 +132,21 @@ export default function DashboardPage() {
             <Kpi label="Open loans" value={portfolio.open_loans.toLocaleString("en-IN")} meta={`${counts.customers.toLocaleString("en-IN")} customers · ${counts.closed_loans.toLocaleString("en-IN")} closed`} />
             <Kpi label="Principal outstanding" value={formatINR(portfolio.principal)} />
             <Kpi label="Interest due" value={formatINR(portfolio.interest)} meta="If every loan were settled today" />
-            <Kpi label="Gold held" value={formatGrams(portfolio.net_weight)} meta={portfolio.ltv ? `Loan-to-value ${portfolio.ltv} %` : "Set the gold rate to see loan-to-value"} />
-            <Kpi label="Collected today" value={formatINR(today.total_collected)} meta={`${today.collections} payment${today.collections === 1 ? "" : "s"}`} />
-            <Kpi label="Disbursed today" value={formatINR(today.disbursed)} meta={`${today.new_loans} new loan${today.new_loans === 1 ? "" : "s"}`} />
+            <Kpi
+              label="Gold held"
+              value={formatGrams(portfolio.net_weight)}
+              meta={`Net ${formatGrams(portfolio.net_weight)} vs Gross ${formatGrams(grossWeight)}`}
+            />
+            <Kpi
+              label="Overdue loans"
+              value={portfolio.overdue.length.toLocaleString("en-IN")}
+              meta={portfolio.overdue.length ? `${formatINR(overdueTotal)} total due` : "Older than 365 days"}
+            />
+            <Kpi
+              label="Write-off amount"
+              value={formatINR(portfolio.written_off || "0.00")}
+              meta={portfolio.written_off_count ? `${portfolio.written_off_count} loan${portfolio.written_off_count === 1 ? "" : "s"} written off` : "Total written off"}
+            />
           </div>
         </section>
 

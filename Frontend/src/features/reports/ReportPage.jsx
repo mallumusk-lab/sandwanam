@@ -3,14 +3,14 @@ import { reports } from "../../api/endpoints.js";
 import { useAuth } from "../../auth/AuthContext.jsx";
 import { useAsync, useDocumentTitle, useSubmit } from "../../hooks/useAsync.js";
 import { formatDay, periodPreset, todayIST } from "../../lib/dates.js";
-import { ENTRY_LABELS, entryAmount, entryLabel } from "../../lib/ledger.js";
-import { formatINR } from "../../lib/money.js";
+import { ENTRY_LABELS, entryAmount } from "../../lib/ledger.js";
+import { formatINR, fromPaise, toPaise } from "../../lib/money.js";
 import { ALL_BRANCHES_LABEL } from "../../lib/permissions.js";
 import { Button, Pagination, Segmented } from "../../ui/controls.jsx";
 import { DataTable } from "../../ui/DataTable.jsx";
 import { EmptyState, ErrorState, SkeletonRows, useToast } from "../../ui/feedback.jsx";
 import { DateField, SelectField, TextField } from "../../ui/fields.jsx";
-import { Banner, Card, PageHeader } from "../../ui/surfaces.jsx";
+import { Banner, Card, PageHeader, Pill } from "../../ui/surfaces.jsx";
 import { LoanLink } from "../shared/links.jsx";
 
 const PRINT_LIMIT = 200; // the API's largest page; longer periods are exported as CSV
@@ -23,6 +23,46 @@ const PRESETS = [
   { value: "custom", label: "Custom" },
 ];
 const KINDS = Object.entries(ENTRY_LABELS);
+
+const TX_BADGES = {
+  newLoan: "New loan",
+  addColl: "Collection",
+  disbursement: "Top up",
+  modify: "Modify",
+  compounding: "Compounding",
+  writeoff: "Write off",
+};
+
+function txBadge(kind) {
+  return TX_BADGES[kind] ?? kind ?? "Entry";
+}
+
+function isDebit(kind) {
+  return kind === "newLoan" || kind === "disbursement" || kind === "modify";
+}
+
+function isCredit(kind) {
+  return kind === "addColl";
+}
+
+function formatReportDate(isoDay) {
+  if (!isoDay) return "—";
+  const [y, m, d] = isoDay.split("-");
+  return y && m && d ? `${m}/${d}/${y}` : isoDay;
+}
+
+const TIME_FORMAT = new Intl.DateTimeFormat("en-US", {
+  hour: "2-digit",
+  minute: "2-digit",
+  hour12: true,
+  timeZone: "Asia/Kolkata",
+});
+
+function formatReportTime(iso) {
+  if (!iso) return null;
+  const date = new Date(iso);
+  return Number.isNaN(date.getTime()) ? null : TIME_FORMAT.format(date);
+}
 
 export default function ReportPage() {
   useDocumentTitle("Reports");
@@ -74,16 +114,72 @@ export default function ReportPage() {
     }
   });
 
+  const currentRows = printRows ?? data?.items ?? [];
+  const { totalDebit, totalCredit } = currentRows.reduce(
+    (acc, r) => {
+      const debit = isDebit(r.kind) ? toPaise(entryAmount(r)) : 0n;
+      const credit = isCredit(r.kind) ? toPaise(entryAmount(r)) : 0n;
+      return {
+        totalDebit: acc.totalDebit + debit,
+        totalCredit: acc.totalCredit + credit,
+      };
+    },
+    { totalDebit: 0n, totalCredit: 0n }
+  );
+
   const columns = [
-    { key: "date", header: "Date", render: (r) => formatDay(r.date) },
-    { key: "loan_number", header: "Loan", render: (r) => <LoanLink loanNumber={r.loan_number} /> },
-    { key: "customer_name", header: "Customer" },
-    { key: "branch", header: "Branch" },
-    { key: "kind", header: "Entry", render: (r) => entryLabel(r.kind) },
-    { key: "amount", header: "Amount", numeric: true, render: (r) => formatINR(entryAmount(r)) },
-    { key: "interest_paid", header: "Interest", numeric: true, render: (r) => (r.kind === "addColl" ? formatINR(r.interest_paid) : "—") },
-    { key: "principal_balance", header: "Principal balance", numeric: true, render: (r) => formatINR(r.principal_balance) },
+    {
+      key: "index",
+      header: "#",
+      render: (_r, idx) => (printRows ? idx + 1 : (page - 1) * PAGE_SIZE + idx + 1),
+    },
+    {
+      key: "date",
+      header: "Date",
+      render: (r) => (
+        <div className="report-date-cell">
+          <span className="report-date-day">{formatReportDate(r.date)}</span>
+          {r.at ? <span className="report-date-time">{formatReportTime(r.at)}</span> : null}
+        </div>
+      ),
+    },
+    {
+      key: "description",
+      header: "Transaction description",
+      render: (r) => (
+        <div className="report-tx-cell">
+          <Pill>{txBadge(r.kind)}</Pill>
+          <LoanLink loanNumber={r.loan_number} title={r.customer_name ? `Customer: ${r.customer_name}` : undefined} />
+        </div>
+      ),
+    },
+    {
+      key: "debit",
+      header: "Debit (out)",
+      numeric: true,
+      render: (r) => (isDebit(r.kind) ? formatINR(entryAmount(r)) : "—"),
+    },
+    {
+      key: "credit",
+      header: "Credit (in)",
+      numeric: true,
+      render: (r) => (isCredit(r.kind) ? formatINR(entryAmount(r)) : "—"),
+    },
   ];
+
+  const footer = currentRows.length ? (
+    <tr>
+      <td colSpan={3} className="report-net-totals" data-label="Summary">
+        Net totals
+      </td>
+      <td className="num report-total-num" data-label="Debit (out)">
+        {formatINR(fromPaise(totalDebit))}
+      </td>
+      <td className="num report-total-num" data-label="Credit (in)">
+        {formatINR(fromPaise(totalCredit))}
+      </td>
+    </tr>
+  ) : null;
 
   return (
     <div className="page">
@@ -132,7 +228,7 @@ export default function ReportPage() {
               {data.total > PRINT_LIMIT ? (
                 <div className="no-print"><Banner tone="info">More than {PRINT_LIMIT} entries: use Export CSV to print or reconcile the whole period.</Banner></div>
               ) : null}
-              <DataTable columns={columns} rows={printRows ?? data.items} rowKey={(r) => r.id}
+              <DataTable columns={columns} rows={printRows ?? data.items} rowKey={(r) => r.id} footer={footer}
                 caption={`${data.total.toLocaleString("en-IN")} entries, ${formatDay(data.from)} – ${formatDay(data.to)}`}
                 empty={<EmptyState icon="file" title="No entries in this period">Try a longer period or clear the filters.</EmptyState>} />
               <div className="no-print">
