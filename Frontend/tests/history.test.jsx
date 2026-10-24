@@ -10,7 +10,7 @@ import { formatDay } from "../src/lib/dates.js";
 import { formatINR } from "../src/lib/money.js";
 import { ToastProvider } from "../src/ui/feedback.jsx";
 
-const LOAN = { gross: "10.000", deduction: "0", principal: "10000", rate: "18", tenure: "12", date: "2025-03-01" };
+const LOAN = { gross: "10.00", deduction: "0", principal: "10000", rate: "18", tenure: "12", date: "2025-03-01" };
 const ITEMS = [{ name: "Chain", count: 1 }];
 const PAYMENT = { key: "e1", date: "2025-03-02", kind: "addColl", amount: "2000", writeOff: false };
 const TOP_UP = { key: "e2", date: "2025-03-04", kind: "disbursement", amount: "1000", writeOff: false };
@@ -63,7 +63,7 @@ test("history import entry types offer a loan closing on the last entry only", (
   const types = entryTypeSelects(loanStep([PAYMENT, TOP_UP]));
   assert.equal(types.length, 2);
   const [first, last] = types;
-  for (const label of ["Payment received", "Additional principal"]) {
+  for (const label of ["Payment received", "Additional principal", "Annual compounding"]) {
     assert.match(first, new RegExp(`>${label}</option>`));
     assert.match(last, new RegExp(`>${label}</option>`));
   }
@@ -116,3 +116,24 @@ test("history import payload sends write_off_remaining on the closing entry only
   ]);
   assert.equal(buildPayload(state([CLOSING])).entries[0].write_off_remaining, false);
 });
+
+test("history import loan step calculates and shows net weight", () => {
+  const html = loanStep([PAYMENT]);
+  assert.match(html, />Net weight</);
+  assert.match(html, /10\.00 g/);
+  assert.match(html, /Gross weight minus deduction\./);
+});
+
+test("history import loan step renders compounding entry and sends amount 0 when blank", () => {
+  const compoundingEntry = { key: "c1", date: "2026-03-01", kind: "compounding", amount: "", writeOff: false };
+  const html = loanStep([compoundingEntry]);
+  assert.match(html, /<option value="compounding" selected="">Annual compounding<\/option>/);
+  assert.match(html, />Compounded interest</);
+  assert.match(html, /Calculated on preview/);
+
+  const payload = buildPayload(state([compoundingEntry]));
+  assert.equal(payload.entries[0].amount, "0");
+  assert.equal(payload.entries[0].kind, "compounding");
+});
+
+

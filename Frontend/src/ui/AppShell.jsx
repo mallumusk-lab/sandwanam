@@ -15,8 +15,8 @@ const NAV = [
       { to: "/customers", label: "Customers", icon: "users", permission: "userlist", end: true },
       // A SuperAdmin adds customers from the customer list; the menu keeps to their three areas.
       { to: "/customers/new", label: "New customer", icon: "userPlus", permission: CREATE, notSuperadmin: true },
-      { to: "/cash", label: "Cash ledger", icon: "rupee", permission: "cashbook" },
       { to: "/reports", label: "Reports", icon: "file", permission: "report" },
+      { to: "/cash", label: "Cash ledger", icon: "rupee", permission: "cashbook" },
       { to: "/history", label: "History import", icon: "clock", permission: "history" },
       { to: "/tools/calculator", label: "Loan calculator", icon: "calculator", permission: "form1" },
     ],

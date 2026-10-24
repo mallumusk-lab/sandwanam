@@ -5,7 +5,7 @@ import assert from "node:assert/strict";
 import { addDays, addMonths, daysBetween, formatDay, isValidDay, periodPreset, todayIST } from "../src/lib/dates.js";
 import { quote, dailyInterest, monthlyRate } from "../src/lib/interest.js";
 import { addItem, itemsError, itemsText, totalQuantity } from "../src/lib/items.js";
-import { CALCULATION_LABELS, calculationLabel, entryAmount, entryLabel, newRequestId } from "../src/lib/ledger.js";
+import { CALCULATION_LABELS, calculationLabel, entryAmount, entryLabel, entryPrincipalPaid, newRequestId } from "../src/lib/ledger.js";
 import { add, amountError, compare, formatINR, fromPaise, normaliseAmount, subtract, toPaise } from "../src/lib/money.js";
 import { ALL_BRANCHES_LABEL, CREATE, FEATURES, can, homePath, isHeadOfficeStaff } from "../src/lib/permissions.js";
 import { passwordError, phoneError, rateError, tenureError, weightErrors } from "../src/lib/validation.js";
@@ -92,6 +92,9 @@ test("permissions and ledger labels", () => {
   assert.equal(can({ is_head_office: false, permissions: ["newcustomer", "userlist"] }, CREATE), true);
   assert.equal(entryLabel("addColl"), "Payment received");
   assert.equal(entryAmount({ kind: "compounding", principal_change: "12.00" }), "12.00");
+  assert.equal(entryPrincipalPaid({ kind: "addColl", principal_paid: "500.00" }), "500.00");
+  assert.equal(entryPrincipalPaid({ kind: "addColl", principal_change: "-30000.00" }), "30000.00");
+  assert.equal(entryPrincipalPaid({ kind: "newLoan", principal_balance: "10000.00" }), null);
   assert.notEqual(newRequestId(), newRequestId());
   assert.match(newRequestId(), /^[A-Za-z0-9-]{8,64}$/);
 });

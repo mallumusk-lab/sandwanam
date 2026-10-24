@@ -83,6 +83,16 @@ def follow_up(row: dict) -> tuple[str | None, bool]:
 def loan(row: dict, live: Quote | None = None) -> dict:
     items = items_of(row)
     follow_up_date, follow_up_set = follow_up(row)
+    principal_balance = (
+        money(live.principal)
+        if live is not None
+        else (money(row.get("last_principal")) if row.get("last_principal") is not None else ("0.00" if row.get("loantype") == "closed" else money(row.get("principle_amount"))))
+    )
+    interest_balance = (
+        money(live.interest)
+        if live is not None
+        else (money(row.get("last_interest")) if row.get("last_interest") is not None else "0.00")
+    )
     return {
         "loan_number": row["loan_number"],
         "customer_id": row.get("customerid"),
@@ -100,6 +110,8 @@ def loan(row: dict, live: Quote | None = None) -> dict:
         "deduction": money(row.get("deduction")),
         "net_weight": money(row.get("net_weight")),
         "principal": money(row.get("principle_amount")),
+        "principal_balance": principal_balance,
+        "interest_balance": interest_balance,
         "rate": money(row.get("interest")),
         "tenure_months": row.get("tenure"),
         "follow_up_date": follow_up_date,
@@ -152,6 +164,17 @@ def statement(row: dict, calc: Calculation | None = None, *, loan_start: date | 
             if legacy_writeoff
             else (row.get("writeoff_principal") or Decimal(0)) + (row.get("writeoff_interest") or Decimal(0))
         )
+    principal_paid = None
+    if kind == "addColl":
+        if calc is not None and getattr(calc, "principal_paid", None) is not None:
+            principal_paid = fmt(calc.principal_paid)
+        else:
+            pc = row.get("currentprincipal")
+            if pc is not None:
+                pc_dec = Decimal(str(pc))
+                principal_paid = fmt(-pc_dec) if pc_dec < 0 else fmt(Decimal(0))
+            else:
+                principal_paid = fmt(Decimal(0))
     view = {
         "id": row["statementid"],
         "loan_number": row.get("loan_number"),
@@ -161,6 +184,7 @@ def statement(row: dict, calc: Calculation | None = None, *, loan_start: date | 
         "amount_paid": money(row.get("amountpaid")),
         "principal_change": money(row.get("currentprincipal")),
         "interest_paid": money(row.get("currentinterest")),
+        "principal_paid": principal_paid,
         "principal_balance": money(row.get("principlebalance")) if not legacy_writeoff else money(Decimal(0)),
         "interest_balance": money(row.get("interestbalance")),
         "accrued_days": row.get("accrued_days"),

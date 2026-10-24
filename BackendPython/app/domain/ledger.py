@@ -388,12 +388,30 @@ def simulate(terms: LoanTerms, principal: Decimal, events: Sequence[ImportEvent]
         entries.extend(q.compoundings)
         if event.kind == COLLECTION:
             entry = collect(q, event.amount)
+            entries.append(entry)
+            position = advance(q.position, entry)
         elif event.kind == TOP_UP:
             entry = top_up(q, event.amount)
+            entries.append(entry)
+            position = advance(q.position, entry)
+        elif event.kind == COMPOUNDING:
+            matched = [i for i, e in enumerate(entries) if e.kind == COMPOUNDING and e.on == event.on]
+            if matched and event.amount <= ZERO:
+                position = q.position
+            elif matched and event.amount > ZERO:
+                old = entries[matched[-1]]
+                diff = event.amount - old.current_principal
+                new_entry = replace(old, current_principal=event.amount, principal_balance=money(old.principal_balance + diff))
+                entries[matched[-1]] = new_entry
+                position = replace(q.position, principal=new_entry.principal_balance)
+            else:
+                accrued = event.amount if event.amount > ZERO else q.interest
+                principal = money(q.principal + accrued)
+                entry = Entry(COMPOUNDING, event.on, ZERO, accrued, ZERO, principal, ZERO, q.period_days)
+                entries.append(entry)
+                position = advance(q.position, entry)
         else:
             raise LedgerError("invalid_type", f"Unsupported entry type '{event.kind}'.")
-        entries.append(entry)
-        position = advance(q.position, entry)
     if not closed:
         trailing, _ = due_compoundings(terms, position, today)
         entries.extend(trailing)

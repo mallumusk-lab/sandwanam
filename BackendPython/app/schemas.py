@@ -82,8 +82,8 @@ class HistoryLoanIn(Body):
 
 class HistoryEntryIn(Body):
     date: Date
-    kind: Annotated[str, Field(pattern=r"^(addColl|disbursement|close)$")]
-    amount: Amount  # for a close: the amount received (may be 0)
+    kind: Annotated[str, Field(pattern=r"^(addColl|disbursement|compounding|close)$")]
+    amount: Amount  # for a close or compounding: the amount (may be 0)
     write_off_remaining: bool = False  # close only: confirms writing off what remains unpaid
 
 

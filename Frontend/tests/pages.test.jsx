@@ -25,7 +25,7 @@ import DashboardPage from "../src/features/dashboard/DashboardPage.jsx";
 import HistoryImportPage from "../src/features/history/HistoryImportPage.jsx";
 import { calculationLines } from "../src/features/loans/LedgerCalculation.jsx";
 import NewLoanPage from "../src/features/loans/NewLoanPage.jsx";
-import StatementPage, { LedgerCard } from "../src/features/loans/StatementPage.jsx";
+import StatementPage, { LedgerCard, LoanDetailsCard } from "../src/features/loans/StatementPage.jsx";
 import NotFoundPage from "../src/features/NotFoundPage.jsx";
 import ReportPage from "../src/features/reports/ReportPage.jsx";
 import { defaultFollowUp, followUpStatus } from "../src/features/shared/FollowUpDialog.jsx";
@@ -153,7 +153,7 @@ test("navigation only shows what the account may use", () => {
 
 test("navigation: branch staff with the cash ledger see it under Branch operations", () => {
   const branchNav = renderAt("/customers", <AppShell />, BRANCH_CASH, "/customers");
-  assert.deepEqual(navLinks(branchNav), ["Customers", "New customer", "Cash ledger", "Reports"]);
+  assert.deepEqual(navLinks(branchNav), ["Customers", "New customer", "Reports", "Cash ledger"]);
   assert.match(branchNav, /<p class="nav-heading">Branch operations<\/p>[\s\S]*href="\/cash"/);
   assert.doesNotMatch(branchNav, />Head office</, "the cash ledger adds no head-office menu for branches");
 });
@@ -173,7 +173,7 @@ test("SuperAdmin navigation: customers, backups, branches and the all-branches p
 test("head office navigation has every branch feature but not branch administration", () => {
   const hqNav = renderAt("/", <AppShell />, HQ_USER, "/");
   assert.deepEqual(navLinks(hqNav), [
-    "Dashboard", "Customers", "New customer", "Cash ledger", "Reports", "History import", "Loan calculator", "Gold rate", "Backups", "Audit log",
+    "Dashboard", "Customers", "New customer", "Reports", "Cash ledger", "History import", "Loan calculator", "Gold rate", "Backups", "Audit log",
   ]);
   assert.match(hqNav, /Branch operations[\s\S]*Head office/);
   assert.match(hqNav, new RegExp(ALL_BRANCHES_LABEL));
@@ -287,6 +287,8 @@ test("statement: Show calculation is a toggle that adds the server's working und
   );
   const hidden = ledger(false);
   assert.match(hidden, /<button type="button" class="btn btn-secondary btn-sm no-print"[^>]*aria-pressed="false"[^>]*>[\s\S]*?Show calculation<\/button>/);
+  assert.match(hidden, /<th[^>]*>Principal paid<\/th>/);
+  assert.doesNotMatch(hidden, /Days charged/);
   assert.doesNotMatch(hidden, /table-detail|on the highest principal/);
   const shown = ledger(true);
   assert.match(shown, /aria-pressed="true"/);
@@ -299,6 +301,24 @@ test("statement: Show calculation is a toggle that adds the server's working und
   assert.match(shown, /Balance: principal ₹70,000.00, interest ₹0.00/);
   assert.match(shown, /First 7 days: no daily interest; payment reduces principal/);
   assert.match(shown, /Earlier system — not recalculated/);
+});
+
+test("statement: Loan details includes principal balance and interest balance", () => {
+  const loan = {
+    ...STATEMENT_LOAN,
+    date: "2026-10-23",
+    items_text: "Chain(2)",
+    net_weight: "10.00",
+    principal: "11111111.00",
+    rate: "11.00",
+    tenure_months: 12,
+    status: "open",
+    outstanding: { principal: "11111111.00", interest: "6697.11", total: "11117808.11" },
+  };
+  const html = renderToStaticMarkup(<LoanDetailsCard loan={loan} statements={STATEMENTS} />);
+  assert.match(html, /<dt>Principal balance<\/dt>\s*<dd>₹1,11,11,111\.00<\/dd>/);
+  assert.match(html, /<dt>Interest balance<\/dt>\s*<dd>₹6,697\.11<\/dd>/);
+  assert.match(html, /<dt>Due today<\/dt>\s*<dd>₹1,11,17,808\.11<\/dd>/);
 });
 
 test("calculation lines only format the server's figures", () => {
