@@ -441,7 +441,7 @@ Routes (`app/routes.jsx`; every page is lazy-loaded):
 | `*` | `features/NotFoundPage.jsx` (also the removed `/tools/application-form`) | — |
 
 Navigation (`ui/AppShell.jsx`) has two groups. **Branch operations**: Dashboard, Customers, New customer
-(hidden for SuperAdmin, who adds customers from the list), Cash ledger (`cashbook`), Reports, History import,
+(hidden for SuperAdmin, who adds customers from the list), Reports, Cash ledger (`cashbook`), History import,
 Loan calculator.
 **Head office**: Gold rate and Audit log (HQ), Backups (HQ and SuperAdmin), Branches & Users (SuperAdmin). The
 head-office branch picker starts with "Admin – all branches" (`ALL_BRANCHES_LABEL`, value `""`) and leaves

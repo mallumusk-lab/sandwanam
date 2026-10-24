@@ -68,10 +68,11 @@ def _validate(loan: HistoryLoan, entries: Sequence[HistoryEntry]) -> Validated:
             raise Invalid(f"A history import can have at most {MAX_EVENTS} entries.", code="too_many_entries")
         events = []
         for index, entry in enumerate(entries, start=1):
-            if entry.kind not in (ledger.COLLECTION, ledger.TOP_UP, ledger.CLOSING):
+            if entry.kind not in (ledger.COLLECTION, ledger.TOP_UP, ledger.COMPOUNDING, ledger.CLOSING):
                 raise Invalid(f"Entry {index} has an unknown type.", code="invalid_entry")
             closing = entry.kind == ledger.CLOSING
-            amount = parse_amount(entry.amount, field=f"Entry {index} amount", allow_zero=closing)
+            compounding = entry.kind == ledger.COMPOUNDING
+            amount = parse_amount(entry.amount, field=f"Entry {index} amount", allow_zero=closing or compounding)
             events.append(ImportEvent(entry.on, entry.kind, amount, closing and bool(entry.write_off_remaining)))
         _check_close_is_last(events)
     except (particulars.ItemsError, validation.ValidationError, AmountError) as exc:

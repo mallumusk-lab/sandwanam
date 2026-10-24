@@ -3,7 +3,7 @@ import { Link, useParams } from "react-router-dom";
 import { loans } from "../../api/endpoints.js";
 import { useAsync, useDocumentTitle } from "../../hooks/useAsync.js";
 import { formatDateTime, formatDay } from "../../lib/dates.js";
-import { entryAmount, entryLabel } from "../../lib/ledger.js";
+import { entryAmount, entryLabel, entryPrincipalPaid } from "../../lib/ledger.js";
 import { formatGrams, formatINR } from "../../lib/money.js";
 import { Button } from "../../ui/controls.jsx";
 import { Icon } from "../../ui/Icon.jsx";
@@ -31,7 +31,7 @@ export function LedgerCard({ loan, statements, initiallyShown = false }) {
     },
     { key: "amount", header: "Amount", numeric: true, render: (s) => formatINR(entryAmount(s)) },
     { key: "interest", header: "Interest paid", numeric: true, render: (s) => (s.kind === "addColl" ? formatINR(s.interest_paid) : "—") },
-    { key: "days", header: "Days charged", numeric: true, render: (s) => s.accrued_days ?? "—" },
+    { key: "principal_paid", header: "Principal paid", numeric: true, render: (s) => (s.kind === "addColl" ? formatINR(entryPrincipalPaid(s)) : "—") },
     { key: "principal_balance", header: "Principal balance", numeric: true, render: (s) => formatINR(s.principal_balance) },
     { key: "interest_balance", header: "Interest balance", numeric: true, render: (s) => formatINR(s.interest_balance) },
     {
@@ -62,6 +62,26 @@ export function LedgerCard({ loan, statements, initiallyShown = false }) {
   );
 }
 
+export function LoanDetailsCard({ loan, statements }) {
+  return (
+    <Card title={<span className="cluster cluster-sm">Loan details <LoanStatus status={loan.status} /></span>}>
+      <Details
+        items={[
+          ["Loan date", formatDay(loan.date)],
+          ["Items", loan.items_text],
+          ["Net weight", formatGrams(loan.net_weight)],
+          ["Loan amount", formatINR(loan.principal)],
+          ["Interest rate", `${loan.rate} % p.a.`],
+          ["Tenure", `${loan.tenure_months} months`],
+          ["Principal balance", formatINR(loan.outstanding?.principal ?? loan.principal_balance ?? statements?.[0]?.principal_balance ?? "0.00")],
+          ["Interest balance", formatINR(loan.outstanding?.interest ?? loan.interest_balance ?? statements?.[0]?.interest_balance ?? "0.00")],
+          loan.outstanding ? ["Due today", formatINR(loan.outstanding.total)] : ["Closed on", formatDay(loan.closed_on)],
+        ]}
+      />
+    </Card>
+  );
+}
+
 export default function StatementPage() {
   const { loanNumber } = useParams();
   const { data, error, reload } = useAsync((signal) => loans.get(loanNumber, { signal }), [loanNumber]);
@@ -80,19 +100,7 @@ export default function StatementPage() {
         actions={<Button icon="printer" onClick={() => window.print()} className="no-print">Print statement</Button>}
       />
       <div className="stack stack-lg">
-        <Card title={<span className="cluster cluster-sm">Loan details <LoanStatus status={loan.status} /></span>}>
-          <Details
-            items={[
-              ["Loan date", formatDay(loan.date)],
-              ["Items", loan.items_text],
-              ["Net weight", formatGrams(loan.net_weight)],
-              ["Loan amount", formatINR(loan.principal)],
-              ["Interest rate", `${loan.rate} % p.a.`],
-              ["Tenure", `${loan.tenure_months} months`],
-              loan.outstanding ? ["Due today", formatINR(loan.outstanding.total)] : ["Closed on", formatDay(loan.closed_on)],
-            ]}
-          />
-        </Card>
+        <LoanDetailsCard loan={loan} statements={statements} />
         <LedgerCard loan={loan} statements={statements} />
       </div>
     </div>

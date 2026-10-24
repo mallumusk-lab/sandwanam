@@ -60,6 +60,10 @@ def close(on, amount=FULL, write_off=False):
     return Event(on, ledger.CLOSING, amount, write_off)
 
 
+def compound(on, amount="0"):
+    return Event(on, ledger.COMPOUNDING, amount)
+
+
 @dataclass
 class Outcome:
     rows: list
@@ -127,6 +131,8 @@ class LiveRun(Harness):
                 elif event.kind == ledger.TOP_UP:
                     run(loans_service.top_up(self.repos, self.actor, number, amount=event.amount, expected_total=None,
                                              request_id=request_id, now=now))
+                elif event.kind == ledger.COMPOUNDING:
+                    amount = "0"
                 else:
                     shown = run(loans_service.closing_quote(self.repos, self.actor, number, now))
                     amount = shown["total"] if event.amount == FULL else event.amount
@@ -263,6 +269,16 @@ class Parity(unittest.TestCase):
         out = self.check(start, [pay(date(2023, 9, 1), "6000")], date(2025, 8, 1), rate="12")
         self.assertEqual(self.kinds(out), ["newLoan", "addColl", "compounding", "compounding"])
         self.assertFalse(out.quote_today["first_week"])
+
+    def test_explicit_compounding_in_history(self):
+        start = date(2024, 1, 1)
+        out = self.check(start, [compound(date(2024, 12, 31))], date(2025, 6, 1), rate="12")
+        self.assertEqual(self.kinds(out), ["newLoan", "compounding"])
+        comp = out.rows[1]
+        self.assertEqual(comp[1], "compounding")
+        self.assertEqual(comp[3], D("12000.00"))
+        self.assertEqual(comp[5], D("112000.00"))
+
 
     # ── closed loans ────────────────────────────────────────────────────────────
     def test_users_window_case_pay_day_two_add_day_four_close_day_five(self):

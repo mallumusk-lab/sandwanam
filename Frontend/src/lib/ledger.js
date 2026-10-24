@@ -1,3 +1,5 @@
+import { fromPaise, toPaise } from "./money.js";
+
 // Display names for ledger entry types (the API's transaction kinds).
 
 export const ENTRY_LABELS = {
@@ -45,6 +47,18 @@ export function entryAmount(entry) {
     default:
       return entry.amount_paid;
   }
+}
+
+/** The principal portion repaid by a collection entry, or null for other entries. */
+export function entryPrincipalPaid(entry) {
+  if (entry.kind !== "addColl") return null;
+  if (entry.principal_paid != null) return entry.principal_paid;
+  if (entry.calculation?.principal_paid != null) return entry.calculation.principal_paid;
+  if (entry.principal_change != null) {
+    const paise = toPaise(entry.principal_change);
+    return paise < 0n ? fromPaise(-paise) : "0.00";
+  }
+  return "0.00";
 }
 
 export function newRequestId() {

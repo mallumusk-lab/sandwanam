@@ -6,7 +6,7 @@ import { useAsync, useDocumentTitle, useFocusOnChange } from "../../hooks/useAsy
 import { formatDay, isValidDay, todayIST } from "../../lib/dates.js";
 import { itemsError } from "../../lib/items.js";
 import { entryLabel, newRequestId } from "../../lib/ledger.js";
-import { amountError, formatINR, normaliseAmount } from "../../lib/money.js";
+import { amountError, formatGrams, formatINR, normaliseAmount, subtract } from "../../lib/money.js";
 import { can } from "../../lib/permissions.js";
 import { addressError, nameError, phoneError, rateError, tenureError, weightErrors } from "../../lib/validation.js";
 import { Button, IconButton, Segmented } from "../../ui/controls.jsx";
@@ -149,9 +149,13 @@ export function LoanStep({ state, setState, onBack, onNext }) {
   const setEntry = (key, field, value) =>
     setState((s) => ({ ...s, entries: s.entries.map((entry) => (entry.key === key ? { ...entry, [field]: value } : entry)) }));
 
+  const gross = normaliseAmount(loan.gross);
+  const deduction = normaliseAmount(loan.deduction);
+  const weights = weightErrors(loan.gross, loan.deduction);
+  const net = gross && deduction && !weights.gross && !weights.deduction ? subtract(gross, deduction) : null;
+
   const next = async (event) => {
     event.preventDefault();
-    const weights = weightErrors(loan.gross, loan.deduction);
     const found = {
       items: itemsError(state.items),
       gross: weights.gross,
@@ -163,9 +167,12 @@ export function LoanStep({ state, setState, onBack, onNext }) {
     };
     state.entries.forEach((entry, index) => {
       const closing = entry.kind === CLOSE;
+      const compounding = entry.kind === "compounding";
       const dateProblem = !isValidDay(entry.date) ? "Enter a date." : entry.date < loan.date ? "This is before the loan date." : entry.date > today ? "This is in the future."
         : closing && state.entries.some((other) => other.date > entry.date) ? "The loan can't close before another entry's date." : "";
-      const amountProblem = amountError(entry.amount, { label: closing ? "Amount received at closing" : "Amount", allowZero: closing });
+      const amountProblem = compounding
+        ? (entry.amount && normaliseAmount(entry.amount) === null ? "Enter a valid amount, or leave blank to calculate." : "")
+        : amountError(entry.amount, { label: closing ? "Amount received at closing" : "Amount", allowZero: closing });
       if (dateProblem) found[`date-${entry.key}`] = `Entry ${index + 1}: ${dateProblem}`;
       if (amountProblem) found[`amount-${entry.key}`] = `Entry ${index + 1}: ${amountProblem}`;
       if (closing && index !== state.entries.length - 1) found[`kind-${entry.key}`] = `Entry ${index + 1}: Only the last entry can be the loan closing.`;
@@ -191,7 +198,10 @@ export function LoanStep({ state, setState, onBack, onNext }) {
       <ItemsEditor items={state.items} onChange={(items) => setState((s) => ({ ...s, items }))} error={errors.items} />
       <div className="grid grid-tight">
         <WeightField label="Gross weight" value={loan.gross} onChange={setLoan("gross")} error={errors.gross} />
-        <WeightField label="Deduction" value={loan.deduction} onChange={setLoan("deduction")} error={errors.deduction} />
+        <WeightField label="Deduction" value={loan.deduction} onChange={setLoan("deduction")} error={errors.deduction}
+          hint="Stones, wax and other non-gold weight." />
+        <TextField label="Net weight" value={net ? formatGrams(net) : "—"} readOnly aria-live="polite" optional
+          hint="Gross weight minus deduction." />
         <AmountField label="Loan amount" value={loan.principal} onChange={setLoan("principal")} error={errors.principal} />
         <TextField label="Interest rate" inputMode="decimal" suffix="% p.a." value={loan.rate} onChange={setLoan("rate")} error={errors.rate} />
         <TextField label="Tenure" inputMode="numeric" suffix="months" value={loan.tenure} onChange={setLoan("tenure")} error={errors.tenure} />
@@ -204,6 +214,7 @@ export function LoanStep({ state, setState, onBack, onNext }) {
         </p>
         {state.entries.map((entry, index) => {
           const closing = entry.kind === CLOSE;
+          const compounding = entry.kind === "compounding";
           const last = index === state.entries.length - 1;
           return (
             <div key={entry.key} className="grid grid-tight entry-row">
@@ -213,9 +224,14 @@ export function LoanStep({ state, setState, onBack, onNext }) {
                 error={errors[`kind-${entry.key}`]}>
                 <option value="addColl">Payment received</option>
                 <option value="disbursement">Additional principal</option>
+                <option value="compounding">Annual compounding</option>
                 {last || closing ? <option value={CLOSE}>Loan closed (settled)</option> : null}
               </SelectField>
-              <AmountField label={closing ? "Amount received at closing" : `Entry ${index + 1} amount`} value={entry.amount}
+              <AmountField label={closing ? "Amount received at closing" : compounding ? "Compounded interest" : `Entry ${index + 1} amount`}
+                value={entry.amount}
+                placeholder={compounding ? "Calculated on preview" : undefined}
+                hint={compounding ? "Leave blank to calculate from interest rate, or enter the compounded amount." : undefined}
+                optional={compounding}
                 onChange={(e) => setEntry(entry.key, "amount", e.target.value)} error={errors[`amount-${entry.key}`]} />
               <div className="field">
                 <span className="field-label" aria-hidden="true">&nbsp;</span>
@@ -256,7 +272,7 @@ export function buildPayload(state) {
     entries: state.entries.map((e) => ({
       date: e.date,
       kind: e.kind,
-      amount: normaliseAmount(e.amount),
+      amount: e.kind === "compounding" ? (normaliseAmount(e.amount) || "0") : normaliseAmount(e.amount),
       ...(e.kind === CLOSE ? { write_off_remaining: Boolean(e.writeOff) } : {}),
     })),
   };
