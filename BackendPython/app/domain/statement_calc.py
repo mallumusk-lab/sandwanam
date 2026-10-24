@@ -184,13 +184,19 @@ def _explain_row(terms: LoanTerms, end: date, row: dict, previous: dict | None, 
                                     "added to principal.", **common)
         return _as_recorded(row)
 
+    had_window_events = (
+        previous is not None
+        and previous.get("transactiontype") != NEW_LOAN
+        and business_date(previous["date"]) <= end
+    )
+    needs_split = had_window_events or (peak is not None and peak != p_base) or window_paid > ZERO or i0 > ZERO
     if unsettled and peak is not None and days >= CLOSING_MINIMUM_DAYS:
         extra = days - CLOSING_MINIMUM_DAYS
         if on > end:
             expected_extra = (on - end).days - (1 if kind == COMPOUNDING else 0)
         else:
             expected_extra = 0
-        if extra == expected_extra:
+        if extra == expected_extra and (extra == 0 or needs_split):
             charged = window_paid + max(i0, ZERO)
             week = interest_for(peak, rate, CLOSING_MINIMUM_DAYS)
             raw = max(ZERO, week - charged) + interest_for(p_base, rate, extra)

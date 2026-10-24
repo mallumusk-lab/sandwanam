@@ -23,7 +23,7 @@ import { FirstWeekBanner } from "../src/features/customers/LoanDialogs.jsx";
 import NewCustomerPage from "../src/features/customers/NewCustomerPage.jsx";
 import DashboardPage from "../src/features/dashboard/DashboardPage.jsx";
 import HistoryImportPage from "../src/features/history/HistoryImportPage.jsx";
-import { calculationLines } from "../src/features/loans/LedgerCalculation.jsx";
+import { calculationLines, calculationMethodTitle } from "../src/features/loans/LedgerCalculation.jsx";
 import NewLoanPage from "../src/features/loans/NewLoanPage.jsx";
 import StatementPage, { LedgerCard, LoanDetailsCard } from "../src/features/loans/StatementPage.jsx";
 import NotFoundPage from "../src/features/NotFoundPage.jsx";
@@ -345,6 +345,10 @@ test("calculation lines only format the server's figures", () => {
     "Interest: ₹517.81, rounded once",
     "Balance: principal ₹70,000.00, interest ₹517.81",
   ]);
+  assert.equal(calculationMethodTitle({ method: "first_week_settlement", extra_days: 3 }), "7 days' interest on the highest principal, then daily");
+  assert.equal(calculationMethodTitle({ method: "first_week_settlement", extra_days: 0 }), "7 days' interest on the highest principal");
+  assert.equal(calculationMethodTitle({ method: "first_week_settlement" }), "7 days' interest on the highest principal");
+  assert.equal(calculationMethodTitle({ method: "inclusive" }), "Daily interest, both days counted");
 });
 
 test("statement: letterhead and title bar are print-only, page header is no-print", () => {

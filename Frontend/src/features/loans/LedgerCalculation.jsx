@@ -40,12 +40,19 @@ export function calculationLines(calc, entry = {}) {
 // or why a row is shown as recorded).
 const NOTE_METHODS = new Set(["opening", "first_week", "as_recorded"]);
 
+export function calculationMethodTitle(calc) {
+  if (calc?.method === "first_week_settlement" && !calc?.extra_days) {
+    return "7 days' interest on the highest principal";
+  }
+  return calculationLabel(calc?.method);
+}
+
 export function LedgerCalculation({ calculation, entry }) {
   if (!calculation) return <p className="calc-note">No calculation is available for this entry.</p>;
   const note = NOTE_METHODS.has(calculation.method) ? calculation.note : null;
   return (
     <div className="calc">
-      <p className="calc-line calc-method">{calculationLabel(calculation.method)}</p>
+      <p className="calc-line calc-method">{calculationMethodTitle(calculation)}</p>
       {calculationLines(calculation, entry).map((line, index) => (
         <p key={index} className="calc-line">{line}</p>
       ))}

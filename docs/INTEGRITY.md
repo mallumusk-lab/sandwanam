@@ -459,6 +459,7 @@ the stored loan, today's closing quote and the customer's loan status must be id
 - `test_legacy_rows_are_not_recalculated`: earlier-system rows say "Earlier system — not recalculated".
 - `test_loan_begun_under_the_earlier_rule`: a loan begun under the earlier rule shows the interest already charged being subtracted.
 - `test_mismatch_is_shown_as_recorded_and_nothing_raises`: rows the rules cannot reproduce are shown "as recorded" and nothing raises.
+- `test_payment_after_day_seven_without_first_week_activity_uses_inclusive_period`: payments after day 7 without week-1 activity explain as standard period interest instead of splitting into first 7 days.
 
 ## 2. Frontend tests (`Frontend/tests/`)
 
