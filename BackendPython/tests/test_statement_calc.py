@@ -80,10 +80,10 @@ class Explain(unittest.TestCase):
     def test_compounding_rows(self):
         entries = simulate(TERMS, D("100000"), [], today=date(2027, 1, 1))
         calcs = explain(TERMS, rows_of(entries), opening=D("100000"))
-        self.assertEqual([c.method for c in calcs], ["opening", "first_week_settlement", "compounding"])
+        self.assertEqual([c.method for c in calcs], ["opening", "compounding", "compounding"])
         first, second = calcs[1:]
-        self.assertEqual((first.days, first.extra_days, first.interest_accrued), (365, 358, D("12000.00")))
-        self.assertIn("yearly compounding", first.note)
+        self.assertEqual((first.days, first.interest_accrued), (365, D("12000.00")))
+        self.assertIn("Yearly compounding", first.note)
         self.assertEqual((second.days, second.principal_charged, second.interest_accrued),
                          (365, D("112000.00"), D("13440.00")))
         self.assertIn("exact days", second.note)
@@ -91,12 +91,28 @@ class Explain(unittest.TestCase):
     def test_write_offs(self):
         partial = replay(TERMS, "100000", [(date(2025, 2, 1), "close", "5000")])
         calcs = explain(TERMS, rows_of(partial), opening=D("100000"))
-        self.assertEqual([c.method for c in calcs], ["opening", "first_week_settlement", "writeoff"])
+        self.assertEqual([c.method for c in calcs], ["opening", "inclusive", "writeoff"])
         self.assertEqual(calcs[2].days, 0)
         self.assertIn("Written off: principal ₹96052.05, interest ₹0.00.", calcs[2].note)
         full = replay(TERMS, "100000", [(date(2025, 2, 1), "close", "0")])
         (writeoff,) = explain(TERMS, rows_of(full), opening=D("100000"))[1:]
         self.assertEqual((writeoff.method, writeoff.days, writeoff.interest_accrued), ("writeoff", 32, D("1052.05")))
+
+    def test_payment_after_day_seven_without_first_week_activity_uses_inclusive_period(self):
+        start = date(2026, 5, 12)
+        terms = LoanTerms.of(start, D("18"))
+        entries = replay(terms, "10000", [(date(2026, 9, 2), "pay", "1000")])
+        calcs = explain(terms, rows_of(entries), opening=D("10000"))
+        self.assertEqual([c.method for c in calcs], ["opening", "inclusive"])
+        payment = calcs[1]
+        self.assertEqual((payment.period_from, payment.period_to, payment.days), (start, date(2026, 9, 2), 114))
+        self.assertEqual(payment.principal_charged, D("10000.00"))
+        self.assertEqual(payment.interest_accrued, D("562.19"))
+        self.assertEqual(payment.interest_paid, D("562.19"))
+        self.assertEqual(payment.principal_paid, D("437.81"))
+        self.assertIsNone(payment.peak_principal)
+        self.assertIsNone(payment.first_week_days)
+        self.assertIn("114 days (12 May 2026 to 2 Sep 2026, both days counted): ₹10000.00 × 18% × 114 ÷ 365 = ₹562.19.", payment.note)
 
     def test_legacy_rows_are_not_recalculated(self):
         legacy = rows_of(replay(TERMS, "100000", [(date(2025, 2, 1), "pay", "1000")]), legacy=True)
@@ -129,7 +145,7 @@ class Explain(unittest.TestCase):
                          principlebalance="x", accrued_days=1))
         calcs = explain(TERMS, rows, opening=D("100000"))
         self.assertEqual([c.method for c in calcs],
-                         ["opening", "first_week_settlement", "as_recorded", "as_recorded", "as_recorded"])
+                         ["opening", "inclusive", "as_recorded", "as_recorded", "as_recorded"])
         self.assertEqual(calcs[3].note, AS_RECORDED_NOTE)
         self.assertEqual(explain(TERMS, []), [])
 

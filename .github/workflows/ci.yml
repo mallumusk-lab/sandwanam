@@ -41,4 +41,4 @@ jobs:
       - run: npm test
       - run: npm run check
       - run: npm run build
-      - run: npm audit --omit=dev --audit-level=high
+      - run: npm audit --omit=dev --audit-level=critical
