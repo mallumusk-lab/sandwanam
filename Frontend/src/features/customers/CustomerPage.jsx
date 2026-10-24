@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useParams } from "react-router-dom";
+import { Link, useParams } from "react-router-dom";
 import { customers } from "../../api/endpoints.js";
 import { useAuth } from "../../auth/AuthContext.jsx";
 import { useAsync, useDocumentTitle } from "../../hooks/useAsync.js";
@@ -8,7 +8,8 @@ import { formatGrams, formatINR } from "../../lib/money.js";
 import { CREATE, can } from "../../lib/permissions.js";
 import { Button } from "../../ui/controls.jsx";
 import { EmptyState, ErrorState, SkeletonRows } from "../../ui/feedback.jsx";
-import { Banner, Card, Details, LoanStatus, PageHeader } from "../../ui/surfaces.jsx";
+import { Icon } from "../../ui/Icon.jsx";
+import { Banner, Card, Details, LoanStatus, Pill } from "../../ui/surfaces.jsx";
 import { FollowUpDialog } from "../shared/FollowUpDialog.jsx";
 import { CloseLoanDialog, EditItemsDialog, PostingDialog } from "./LoanDialogs.jsx";
 
@@ -95,17 +96,62 @@ export default function CustomerPage() {
 
   return (
     <div className="page" aria-busy={loading}>
-      <PageHeader title={customer.name} back={{ to: "/customers", label: "Customers" }}
-        description={`Customer ${customer.customer_number} · ${customer.branch}`} actions={newLoan} />
+      <header className="statement-topbar customer-topbar">
+        <Link
+          className="statement-back-btn"
+          to="/customers"
+          aria-label="Back to customers"
+        >
+          <span className="statement-back-circle" aria-hidden="true">
+            <Icon name="arrowLeft" />
+          </span>
+          <span>Customers</span>
+        </Link>
+        <h1 className="statement-topbar-title">Customer</h1>
+        <div className="statement-topbar-actions">
+          {newLoan}
+        </div>
+      </header>
       <div className="stack stack-lg">
         {error ? (
           <Banner tone="warning" title="Couldn't refresh this page">
             <p>{error.message} <Button size="sm" variant="ghost" icon="refresh" onClick={reload}>Try again</Button></p>
           </Banner>
         ) : null}
-        <Card title="Contact">
-          <Details items={[["Phone", customer.phone], ["Address", customer.address], ["Branch", customer.branch]]} />
-        </Card>
+        <div className="statement-card customer-card">
+          <div className="statement-card-top">
+            <div className="statement-borrower">
+              <div className="statement-avatar" aria-hidden="true">
+                <Icon name="user" />
+              </div>
+              <div>
+                <div className="statement-badge-label">Borrower Name</div>
+                <h2 className="statement-badge-val">{customer.name}</h2>
+              </div>
+            </div>
+            <div className="statement-loan-id-stack">
+              <div className="statement-badge-label"># Customer ID</div>
+              <div className="cluster cluster-sm">
+                <span className="statement-badge-val">{customer.customer_number}</span>
+                <Pill>{customer.branch}</Pill>
+              </div>
+            </div>
+          </div>
+
+          <div className="statement-card-section">
+            <h3 className="statement-card-title">Customer details</h3>
+          </div>
+
+          <Details
+            items={[
+              ["Phone", customer.phone || "—"],
+              ["Address", customer.address || "—"],
+              ["Branch", customer.branch || "—"],
+              ["Open loans", `${openLoans.length} open`],
+              ["Total loans", `${loans.length} total`],
+            ]}
+          />
+        </div>
         <section className="stack" aria-labelledby="open-loans">
           <h2 id="open-loans">Open loans ({openLoans.length})</h2>
           {openLoans.length ? (

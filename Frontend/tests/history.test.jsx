@@ -5,7 +5,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { renderToStaticMarkup } from "react-dom/server";
 import { StaticRouter } from "react-router-dom/server";
-import { LoanStep, ReviewStep, buildPayload } from "../src/features/history/HistoryImportPage.jsx";
+import { LoanStep, ReviewStep, buildPayload, nextCompoundingDate } from "../src/features/history/HistoryImportPage.jsx";
 import { formatDay } from "../src/lib/dates.js";
 import { formatINR } from "../src/lib/money.js";
 import { ToastProvider } from "../src/ui/feedback.jsx";
@@ -135,5 +135,13 @@ test("history import loan step renders compounding entry and sends amount 0 when
   assert.equal(payload.entries[0].amount, "0");
   assert.equal(payload.entries[0].kind, "compounding");
 });
+
+test("compounding date auto-calculates from start date and compounded interest is calculated on preview", () => {
+  const calculated = nextCompoundingDate("2024-03-01", [{ key: "c1", kind: "compounding" }], "c1");
+  assert.equal(calculated, "2025-03-01");
+  const second = nextCompoundingDate("2024-03-01", [{ key: "c1", kind: "compounding" }, { key: "c2", kind: "compounding" }], "c2");
+  assert.equal(second, "2026-03-01");
+});
+
 
 

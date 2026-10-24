@@ -185,6 +185,7 @@ the stored loan, today's closing quote and the customer's loan status must be id
 - `test_close_with_nothing_received_writes_off_everything`: a closing with ₹0 received writes off everything, as live.
 - `test_settling_via_close_with_full_payment`: a closing that pays everything owed matches live.
 - `test_close_with_shortfall_and_no_write_off_is_refused_identically`: a short closing without confirmation is refused with the same `writeoff_not_confirmed` message and amount as live, and writes nothing.
+- `test_explicit_compounding_in_history`: an explicit compounding entry in history imports identically to live.
 
 #### `ImportCloseRules`
 - `test_close_must_be_the_last_entry`: a closing listed or dated before another entry is `close_not_last`.
@@ -501,6 +502,9 @@ the stored loan, today's closing quote and the customer's loan status must be id
 - `history import review shows the closing rows, the closing date and the server's write-off amount`: the review shows the server's closing rows, "imported as closed on …" and the server's write-off amount to confirm.
 - `history import review of an open loan has no closing text or write-off`: an open-loan review shows no closing text and no write-off checkbox.
 - `history import payload sends write_off_remaining on the closing entry only`: only the closing entry carries `write_off_remaining`.
+- `history import loan step calculates and shows net weight`: the loan step calculates net weight from gross weight and stones.
+- `history import loan step renders compounding entry and sends amount 0 when blank`: a compounding entry sends amount 0 when left blank.
+- `compounding date auto-calculates from start date and compounded interest is calculated on preview`: compounding date auto-calculates from loan start date and compounded interest is calculated on preview.
 
 ### `lib.test.js`
 - `money: exact paise arithmetic`: money is added and compared in whole paise, never floats.
@@ -531,6 +535,13 @@ the stored loan, today's closing quote and the customer's loan status must be id
 - `pages a branch may not use explain why instead of rendering`: a refused page explains why.
 - `guards: gold rate and audit log are head office staff only; backups include SuperAdmin`: page guards match the server's rules, including the Cash ledger (`cashbook`, never the SuperAdmin).
 - `statement: Show calculation is a toggle that adds the server's working under each entry`: the statement toggle is a pressed/unpressed button that adds a row per entry.
+- `statement: Loan details includes principal balance and interest balance`: statement loan details show principal balance, interest balance and amount due.
+- `statement: letterhead and title bar are print-only, page header is no-print`: the statement letterhead and title bar are print-only, while the navigation page header is hidden when printing.
+- `statement: ledger table date keeps day and month together to consume at most two lines`: the ledger table keeps the day and month together so date cells consume at most two vertical lines.
+- `customer: topbar has circled back arrow and customer card has statement layout`: the customer page has a streamlined topbar and structured statement-style customer card.
+- `report: transaction table has index, date with time, description badge, debit, credit and net totals`: the report table displays row index, date with time, transaction description badge, debit/credit columns, and net totals footer.
+- `dashboard: portfolio cards show overdue loans, write-off amount, net vs gross weight, and find customer is removed`: the dashboard portfolio section displays overdue loans, write-off amount, net vs gross weight, and removes find customer and today activity cards.
+- `customers: branch column is shown for head office admin and hidden for individual branch staff`: the customers list shows the Branch column only to head office admins and omits it for individual branch users.
 - `calculation lines only format the server's figures`: the calculation lines show the server's numbers, never browser maths.
 - `first-week banners show the server's amounts`: payment and closing dialogs show the server's first-week figures.
 - `follow-up dialog starts on the staff-set date, else a week from today`: the follow-up dialog's starting date.

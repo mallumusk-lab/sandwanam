@@ -111,6 +111,13 @@ async def _load_visible(repos, actor: Actor, loan_number: str) -> dict:
     return loan
 
 
+async def _letterhead(repos, branch_prefix: str | None) -> dict | None:
+    if not branch_prefix:
+        return None
+    row = await repos.users.branch(branch_prefix)
+    return serialize.branch(row) if row else None
+
+
 async def detail(repos, actor: Actor, loan_number: str, now: datetime) -> dict:
     actor.require("userlist")
     loan = await _load_visible(repos, actor, loan_number)
@@ -119,7 +126,9 @@ async def detail(repos, actor: Actor, loan_number: str, now: datetime) -> dict:
     oldest_first = list(reversed(statements))
     calculations = statement_calc.explain(terms, oldest_first, opening=loan.get("principle_amount"))
     by_id = {row["statementid"]: calc for row, calc in zip(oldest_first, calculations)}
+    branch_info = await _letterhead(repos, loan.get("branch_prefix"))
     return {
+        "letterhead": branch_info,
         "loan": serialize.loan(loan, live_quote(loan, dates.business_date(now))),
         "statements": [
             serialize.statement(row, by_id.get(row["statementid"]), loan_start=terms.start_date) for row in statements

@@ -312,6 +312,24 @@ class Statements(_Part):
     async def get(self, statement_id):
         return next((dict(s) for s in self.s.statements if s["statementid"] == statement_id), None)
 
+    async def total_written_off(self, branch=None):
+        total = Decimal("0.00")
+        loans_seen = set()
+        for s in self.s.statements:
+            if s.get("transactiontype") == "writeoff":
+                loan = self.s.loans.get(s["loan_number"])
+                if loan:
+                    cust = self.s.customers.get(loan["customerid"])
+                    if cust and (branch is None or cust.get("branch_prefix") == branch):
+                        wp = s.get("writeoff_principal")
+                        wi = s.get("writeoff_interest")
+                        if wp is not None:
+                            total += (wp or Decimal(0)) + (wi or Decimal(0))
+                        else:
+                            total += s.get("principlebalance") or Decimal(0)
+                        loans_seen.add(s["loan_number"])
+        return {"amount": total, "count": len(loans_seen)}
+
 
 class Audit(_Part):
     async def log(self, **entry):

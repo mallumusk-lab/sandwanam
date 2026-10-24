@@ -217,3 +217,17 @@ class StatementsRepo:
 
     async def get(self, statement_id: int) -> dict | None:
         return await self.db.fetchrow(f"SELECT {STATEMENT_FIELDS} FROM statement WHERE statementid = $1", statement_id)
+
+    async def total_written_off(self, branch: str | None) -> dict:
+        row = await self.db.fetchrow(
+            """
+            SELECT COALESCE(SUM(COALESCE(s.writeoff_principal + s.writeoff_interest, s.principlebalance)), 0) AS amount,
+                   COUNT(DISTINCT s.loan_number) AS count
+            FROM statement s
+            JOIN loan_data l ON l.loan_number = s.loan_number
+            JOIN customers c ON c.customerid = l.customerid
+            WHERE s.transactiontype = 'writeoff' AND ($1::text IS NULL OR c.branch_prefix = $1)
+            """,
+            branch,
+        )
+        return {"amount": row["amount"] if row else Decimal("0.00"), "count": int(row["count"]) if row else 0}

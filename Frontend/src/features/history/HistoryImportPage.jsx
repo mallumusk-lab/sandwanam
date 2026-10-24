@@ -3,7 +3,7 @@ import { Link } from "react-router-dom";
 import { branches as branchesApi, customers, imports } from "../../api/endpoints.js";
 import { useAuth } from "../../auth/AuthContext.jsx";
 import { useAsync, useDocumentTitle, useFocusOnChange } from "../../hooks/useAsync.js";
-import { formatDay, isValidDay, todayIST } from "../../lib/dates.js";
+import { addDays, formatDay, isValidDay, todayIST } from "../../lib/dates.js";
 import { itemsError } from "../../lib/items.js";
 import { entryLabel, newRequestId } from "../../lib/ledger.js";
 import { amountError, formatGrams, formatINR, normaliseAmount, subtract } from "../../lib/money.js";
@@ -22,6 +22,18 @@ const STEPS = ["Customer", "Loan and past entries", "Review and import"];
 const emptyEntry = () => ({ key: newRequestId(), date: "", kind: "addColl", amount: "", writeOff: false });
 // A past settlement: the server replays it as a live close (7-day minimum, write-off only when confirmed).
 const CLOSE = "close";
+
+export function nextCompoundingDate(loanDate, entries, targetKey) {
+  if (!isValidDay(loanDate)) return "";
+  let count = 0;
+  for (const entry of entries) {
+    if (entry.key === targetKey || entry.kind === "compounding") {
+      count += 1;
+    }
+    if (entry.key === targetKey) break;
+  }
+  return addDays(loanDate, 365 * Math.max(1, count));
+}
 
 export function CustomerStep({ state, setState, onNext }) {
   const { user, branch } = useAuth();
@@ -145,9 +157,35 @@ export function LoanStep({ state, setState, onBack, onNext }) {
   const today = todayIST();
   const loan = state.loan;
   const closes = state.entries.some((entry) => entry.kind === CLOSE);
-  const setLoan = (key) => (e) => setState((s) => ({ ...s, loan: { ...s.loan, [key]: e.target.value } }));
+  const setLoan = (key) => (e) => {
+    const val = e.target.value;
+    setState((s) => {
+      let nextEntries = s.entries;
+      if (key === "date" && isValidDay(val)) {
+        let compCount = 0;
+        nextEntries = s.entries.map((entry) => {
+          if (entry.kind === "compounding") {
+            compCount += 1;
+            return { ...entry, date: addDays(val, 365 * compCount) };
+          }
+          return entry;
+        });
+      }
+      return { ...s, loan: { ...s.loan, [key]: val }, entries: nextEntries };
+    });
+  };
   const setEntry = (key, field, value) =>
-    setState((s) => ({ ...s, entries: s.entries.map((entry) => (entry.key === key ? { ...entry, [field]: value } : entry)) }));
+    setState((s) => ({
+      ...s,
+      entries: s.entries.map((entry) => {
+        if (entry.key !== key) return entry;
+        if (field === "kind" && value === "compounding") {
+          const autoDate = nextCompoundingDate(s.loan.date, s.entries, key);
+          return { ...entry, kind: value, date: autoDate || entry.date, amount: "" };
+        }
+        return { ...entry, [field]: value };
+      }),
+    }));
 
   const gross = normaliseAmount(loan.gross);
   const deduction = normaliseAmount(loan.deduction);
@@ -171,7 +209,7 @@ export function LoanStep({ state, setState, onBack, onNext }) {
       const dateProblem = !isValidDay(entry.date) ? "Enter a date." : entry.date < loan.date ? "This is before the loan date." : entry.date > today ? "This is in the future."
         : closing && state.entries.some((other) => other.date > entry.date) ? "The loan can't close before another entry's date." : "";
       const amountProblem = compounding
-        ? (entry.amount && normaliseAmount(entry.amount) === null ? "Enter a valid amount, or leave blank to calculate." : "")
+        ? ""
         : amountError(entry.amount, { label: closing ? "Amount received at closing" : "Amount", allowZero: closing });
       if (dateProblem) found[`date-${entry.key}`] = `Entry ${index + 1}: ${dateProblem}`;
       if (amountProblem) found[`amount-${entry.key}`] = `Entry ${index + 1}: ${amountProblem}`;
@@ -227,12 +265,18 @@ export function LoanStep({ state, setState, onBack, onNext }) {
                 <option value="compounding">Annual compounding</option>
                 {last || closing ? <option value={CLOSE}>Loan closed (settled)</option> : null}
               </SelectField>
-              <AmountField label={closing ? "Amount received at closing" : compounding ? "Compounded interest" : `Entry ${index + 1} amount`}
-                value={entry.amount}
-                placeholder={compounding ? "Calculated on preview" : undefined}
-                hint={compounding ? "Leave blank to calculate from interest rate, or enter the compounded amount." : undefined}
-                optional={compounding}
-                onChange={(e) => setEntry(entry.key, "amount", e.target.value)} error={errors[`amount-${entry.key}`]} />
+              {compounding ? (
+                <div className="field">
+                  <span className="field-label">Compounded interest</span>
+                  <div className="field-calculated-note">
+                    Calculated on preview from loan values
+                  </div>
+                </div>
+              ) : (
+                <AmountField label={closing ? "Amount received at closing" : `Entry ${index + 1} amount`}
+                  value={entry.amount}
+                  onChange={(e) => setEntry(entry.key, "amount", e.target.value)} error={errors[`amount-${entry.key}`]} />
+              )}
               <div className="field">
                 <span className="field-label" aria-hidden="true">&nbsp;</span>
                 <IconButton icon="trash" label={`Remove entry ${index + 1}`}
@@ -362,7 +406,7 @@ export default function HistoryImportPage() {
 
   if (done) {
     return (
-      <div className="page narrow">
+      <div className="page">
         <h1 className="visually-hidden" ref={doneHeading} tabIndex={-1}>Loan {done.loan_number} imported</h1>
         <Card>
           <EmptyState icon="checkCircle" title={`Loan ${done.loan_number} imported`}
@@ -380,7 +424,7 @@ export default function HistoryImportPage() {
   }
 
   return (
-    <div className="page narrow">
+    <div className="page">
       <PageHeader title="History import" description="Bring a loan that started before this system across with its past payments." />
       <Stepper steps={STEPS} current={step} />
       <h2 className="visually-hidden" ref={stepHeading} tabIndex={-1}>Step {step + 1} of {STEPS.length}: {STEPS[step]}</h2>

@@ -8,11 +8,11 @@ import { Fragment } from "react";
  * detail(row): optional; when it returns content, a full-width row follows the row
  * (joined to it in the stacked layout).
  */
-export function DataTable({ columns, rows, rowKey, caption, stack = true, empty, detail }) {
+export function DataTable({ columns, rows, rowKey, caption, stack = true, empty, detail, footer, className = "" }) {
   if (!rows.length && empty) return empty;
   return (
     <div className="table-wrap">
-      <table className={`table${stack ? " table-stack" : ""}`}>
+      <table className={`table${stack ? " table-stack" : ""}${className ? ` ${className}` : ""}`}>
         {caption ? <caption>{caption}</caption> : null}
         <thead>
           <tr>
@@ -33,10 +33,10 @@ export function DataTable({ columns, rows, rowKey, caption, stack = true, empty,
                   {columns.map((column) => (
                     <td
                       key={column.key}
-                      data-label={typeof column.header === "string" ? column.header : undefined}
+                      data-label={typeof column.header === "string" ? column.header : column.headerText ?? (typeof column.header?.props?.children === "string" ? column.header.props.children : undefined)}
                       className={[column.numeric ? "num" : "", column.className ?? ""].filter(Boolean).join(" ") || undefined}
                     >
-                      {column.render ? column.render(row) : row[column.key] ?? "—"}
+                      {column.render ? column.render(row, index) : row[column.key] ?? "—"}
                     </td>
                   ))}
                 </tr>
@@ -49,6 +49,7 @@ export function DataTable({ columns, rows, rowKey, caption, stack = true, empty,
             );
           })}
         </tbody>
+        {footer ? <tfoot>{footer}</tfoot> : null}
       </table>
     </div>
   );

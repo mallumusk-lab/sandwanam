@@ -27,7 +27,10 @@ from typing import Mapping
 
 from .domain import validation
 
-DEV_ORIGINS = ("http://localhost:5173", "http://127.0.0.1:5173")
+DEV_ORIGINS = (
+    "http://localhost:5173", "http://127.0.0.1:5173",
+    "http://localhost:5174", "http://127.0.0.1:5174",
+)
 ZIP_PASSWORD_MIN = 12
 ZIP_PASSWORD_MAX = 128
 
