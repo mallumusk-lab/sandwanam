@@ -39,7 +39,7 @@ export function weightErrors(gross, deduction) {
 export function rateError(value) {
   const error = amountError(value, { label: "Interest rate" });
   if (error) return error;
-  return compare(normaliseAmount(value), "100") > 0 ? "The interest rate cannot be more than 100 % p.a." : "";
+  return compare(normaliseAmount(value), "100") > 0 ? "The interest rate cannot be more than 100% p.a." : "";
 }
 
 export function tenureError(value) {
