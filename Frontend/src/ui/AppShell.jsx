@@ -176,7 +176,7 @@ export function AppShell() {
             </span>
           </div>
           <NavLink to="/account" className="nav-link">
-            <Icon name="key" /> Change password
+            <Icon name="user" /> My profile
           </NavLink>
           <button type="button" className="nav-link nav-button" onClick={signOut}>
             <Icon name="logOut" /> Sign out

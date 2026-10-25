@@ -16,8 +16,6 @@ const PRESETS = [
   { value: "custom", label: "Custom" },
 ];
 const SHOWN = [
-  "new_customers",
-  "new_loans",
   "disbursed",
   "total_collected",
   "interest_collected",
@@ -26,6 +24,8 @@ const SHOWN = [
   "compounded",
   "written_off",
   "gold_pledged",
+  "new_customers",
+  "new_loans",
 ];
 
 export function KpiButton({ label, value, meta, onClick }) {
