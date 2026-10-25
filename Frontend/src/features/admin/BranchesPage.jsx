@@ -58,7 +58,7 @@ function BranchDialog({ account, onClose, onSaved }) {
   const save = async () => {
     const found = {
       display_name: form.display_name.trim().length >= 2 ? "" : "Enter the branch name.",
-      username: creating && !/^[A-Za-z0-9_.-]{3,32}$/.test(form.username) ? "3–32 letters, digits, dots, dashes or underscores." : "",
+      username: creating && !/^[A-Za-z0-9_.-]{3,32}$/.test(form.username) ? "3–32 letters, digits, dots, hyphens, or underscores." : "",
       branch_prefix: creating && !/^[A-Za-z]{2,5}$/.test(form.branch_prefix.trim()) ? "2–5 letters, for example VZM." : "",
       temporary_password: creating ? passwordError(form.temporary_password, form.username) : "",
     };
@@ -96,7 +96,7 @@ function BranchDialog({ account, onClose, onSaved }) {
 
   return (
     <Modal open size="lg" onClose={onClose} busy={pending} title={creating ? "New branch" : `Edit ${account.name}`}
-      description="Letterhead details appear on every receipt printed for this branch's customers."
+      description="Letterhead details appear on every receipt printed for this branch."
       footer={<><Button onClick={onClose} disabled={pending}>Cancel</Button><Button variant="primary" loading={pending} onClick={save}>{creating ? "Create branch" : "Save"}</Button></>}>
       <div className="stack">
         {errors.form ? <Banner tone="danger">{errors.form}</Banner> : null}
@@ -167,7 +167,7 @@ function PasswordDialog({ account, onClose, onSaved }) {
   };
   return (
     <Modal open onClose={onClose} busy={pending} title={`Reset password · ${account.name}`}
-      description="The account is signed out everywhere and must choose a new password at next sign-in."
+      description="The account will be signed out everywhere and must set a new password at next sign-in."
       footer={<><Button onClick={onClose} disabled={pending}>Cancel</Button><Button variant="primary" loading={pending} onClick={save}>Set temporary password</Button></>}>
       <PasswordField label="Temporary password" autoComplete="new-password" value={password}
         onChange={(e) => setPassword(e.target.value)} error={error} data-autofocus />
@@ -195,7 +195,7 @@ export default function BranchesPage() {
       await confirm.action();
       done(confirm.success);
     } catch (err) {
-      toast.error("That didn't work", err.message);
+      toast.error("Action failed", err.message);
       setConfirm(null);
     } finally {
       setBusy(false);
@@ -228,7 +228,7 @@ export default function BranchesPage() {
           {!a.is_head_office ? (
             <Button size="sm" variant="ghost" onClick={() => setConfirm({
               title: a.is_active ? `Deactivate ${a.name}?` : `Activate ${a.name}?`,
-              body: a.is_active ? "Its staff are signed out and can't sign in. Customers and loans are kept." : "Its staff can sign in again.",
+              body: a.is_active ? "Staff will be signed out and cannot sign in. Customer records and loans are kept." : "Its staff can sign in again.",
               label: a.is_active ? "Deactivate" : "Activate", tone: a.is_active ? "danger" : "primary",
               success: a.is_active ? "Branch deactivated" : "Branch activated", action: () => admin.setActive(a.username, !a.is_active),
             })}>{a.is_active ? "Deactivate" : "Activate"}</Button>

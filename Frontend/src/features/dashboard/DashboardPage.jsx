@@ -131,7 +131,7 @@ export default function DashboardPage() {
           <div className="grid grid-tight">
             <Kpi label="Open loans" value={portfolio.open_loans.toLocaleString("en-IN")} meta={`${counts.customers.toLocaleString("en-IN")} customers · ${counts.closed_loans.toLocaleString("en-IN")} closed`} />
             <Kpi label="Principal outstanding" value={formatINR(portfolio.principal)} />
-            <Kpi label="Interest due" value={formatINR(portfolio.interest)} meta="If every loan were settled today" />
+            <Kpi label="Interest due" value={formatINR(portfolio.interest)} meta="If all open loans were settled today" />
             <Kpi
               label="Gold held"
               value={formatGrams(portfolio.net_weight)}
@@ -140,7 +140,7 @@ export default function DashboardPage() {
             <Kpi
               label="Overdue loans"
               value={portfolio.overdue.length.toLocaleString("en-IN")}
-              meta={portfolio.overdue.length ? `${formatINR(overdueTotal)} total due` : "Older than 365 days"}
+              meta={portfolio.overdue.length ? `${formatINR(overdueTotal)} total due` : "No loans older than 365 days"}
             />
             <Kpi
               label="Write-off amount"
@@ -153,12 +153,12 @@ export default function DashboardPage() {
         <PerformancePanel branch={branch} />
 
         <div className="grid">
-          <Card title="Disbursed and collected">
+          <Card title="Disbursement and collection trends">
             <ColumnChart
-              title="Disbursed and collected by month, last six months"
+              title="Disbursed and collected amounts by month, last six months"
               series={[
-                { key: "disbursed", label: "Disbursed", color: "var(--color-chart-1)" },
-                { key: "collected", label: "Collected", color: "var(--color-chart-2)" },
+                { key: "disbursed", label: "Disbursed amount", color: "var(--color-chart-1)" },
+                { key: "collected", label: "Collected amount", color: "var(--color-chart-2)" },
               ]}
               data={trends.map((t) => ({ label: t.label.split(" ")[0], disbursed: t.disbursed, collected: t.collected }))}
             />

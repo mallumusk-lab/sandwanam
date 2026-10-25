@@ -27,6 +27,7 @@ WITH {_SCOPED_LOANS}, {_ENTRIES}
 SELECT
     (SELECT COALESCE(SUM(principle_amount), 0) FROM scoped_loans WHERE date >= $2 AND date < $3) AS new_principal,
     (SELECT COUNT(*) FROM scoped_loans WHERE date >= $2 AND date < $3) AS new_loans,
+    (SELECT COUNT(*) FROM customers WHERE ($1::text IS NULL OR branch_prefix = $1) AND created_at >= $2 AND created_at < $3) AS new_customers,
     (SELECT COALESCE(SUM(CASE transactiontype WHEN 'disbursement' THEN currentprincipal
                                               WHEN 'modify' THEN amountpaid END), 0)
        FROM entries WHERE transactiontype IN ('disbursement', 'modify')) AS top_ups,
@@ -65,6 +66,12 @@ DETAILS = {
         WITH {_SCOPED_LOANS}
         SELECT {_DETAIL_LOAN_COLUMNS} FROM scoped_loans
         WHERE date >= $2 AND date < $3 ORDER BY date DESC LIMIT $4""",
+    "new_customers": f"""
+        SELECT customerid, customername, phone, branch_prefix, user_id, created_at
+        FROM customers
+        WHERE ($1::text IS NULL OR branch_prefix = $1)
+          AND created_at >= $2 AND created_at < $3
+        ORDER BY created_at DESC LIMIT $4""",
     "collections": f"""
         WITH {_SCOPED_LOANS}, {_ENTRIES}
         SELECT {_DETAIL_ENTRY_COLUMNS} FROM entries

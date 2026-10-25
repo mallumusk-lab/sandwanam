@@ -125,12 +125,12 @@ export default function CustomerPage() {
                 <Icon name="user" />
               </div>
               <div>
-                <div className="statement-badge-label">Borrower Name</div>
+                <div className="statement-badge-label">Customer name</div>
                 <h2 className="statement-badge-val">{customer.name}</h2>
               </div>
             </div>
             <div className="statement-loan-id-stack">
-              <div className="statement-badge-label"># Customer ID</div>
+              <div className="statement-badge-label">Customer no.</div>
               <div className="cluster cluster-sm">
                 <span className="statement-badge-val">{customer.customer_number}</span>
                 <Pill>{customer.branch}</Pill>
@@ -157,7 +157,7 @@ export default function CustomerPage() {
           {openLoans.length ? (
             openLoans.map((loan) => <LoanCard key={loan.loan_number} loan={loan} user={user} onAction={(type, l) => setDialog({ type, loan: l })} />)
           ) : (
-            <Card><EmptyState icon="rupee" title="No open loans" action={newLoan}>Open a loan when the customer pledges gold.</EmptyState></Card>
+            <Card><EmptyState icon="rupee" title="No open loans" action={newLoan}>Open a loan when this customer pledges gold.</EmptyState></Card>
           )}
         </section>
         {closedLoans.length ? (

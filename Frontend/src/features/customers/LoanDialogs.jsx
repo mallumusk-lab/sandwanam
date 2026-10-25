@@ -92,7 +92,7 @@ export function PostingDialog({ mode, loan, open, onClose, onPosted }) {
       return;
     }
     if (collect && compare(normaliseAmount(amount), outstanding.total) >= 0) {
-      setError(`That settles the whole amount due (${formatINR(outstanding.total)}). Use "Close loan" instead, so the pledged items are released.`);
+      setError(`That would settle the full amount due (${formatINR(outstanding.total)}). Use "Close loan" instead — this releases the pledged items.`);
       focusErrorIn("posting-form");
       return;
     }
@@ -110,7 +110,7 @@ export function PostingDialog({ mode, loan, open, onClose, onPosted }) {
     } catch (err) {
       if (err.code === "outstanding_changed") {
         setOutstanding(err.details.outstanding);
-        setNotice("The amount due changed since this window opened (for example, a new day started). Check it and submit again.");
+        setNotice("The amount due has changed since this dialog was opened (for example, because a new day started). Review the updated figures and submit again.");
         setRequestId(newRequestId());
       } else if (err.status === 0) {
         setUncertain(true);
@@ -213,7 +213,7 @@ export function CloseLoanDialog({ loan, open, onClose, onClosed }) {
         setQuote(err.details.outstanding);
         setReceived(err.details.outstanding.total);
         setRequestId(newRequestId());
-        setError("The closing amount changed. Check the new amount and confirm again.");
+        setError("The closing amount has changed. Review the new amount and confirm again.");
       } else if (err.status === 0) {
         setUncertain(true);
         setError(CONNECTION_LOST);
@@ -256,7 +256,7 @@ export function CloseLoanDialog({ loan, open, onClose, onClosed }) {
           {shortfall ? (
             <CheckboxField checked={writeOff} disabled={uncertain} onChange={(e) => setWriteOff(e.target.checked)}
               label={`Write off the remaining ${formatINR(remaining)}`}
-              hint="The loan will be closed with this amount recorded as written off. This can't be undone." />
+              hint="The loan will be closed with this amount written off. This cannot be undone." />
           ) : null}
         </form>
       )}

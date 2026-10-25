@@ -30,6 +30,7 @@ from .dates import parse_business_date
 PERIOD_METRICS = (
     "disbursed",
     "new_loans",
+    "new_customers",
     "interest_collected",
     "principal_collected",
     "total_collected",

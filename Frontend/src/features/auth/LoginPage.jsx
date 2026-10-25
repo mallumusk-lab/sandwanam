@@ -75,7 +75,7 @@ export default function LoginPage() {
             <Button type="submit" variant="primary" block loading={pending}>
               Sign in
             </Button>
-            <p className="field-hint">Forgot your password? Ask your SuperAdmin to issue a temporary one.</p>
+            <p className="field-hint">Forgotten your password? Ask your SuperAdmin to reset it.</p>
           </form>
         </Card>
       </main>

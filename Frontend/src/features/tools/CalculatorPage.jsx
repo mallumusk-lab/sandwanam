@@ -84,7 +84,7 @@ export default function CalculatorPage() {
                   </tbody>
                 </table>
               </div>
-              <Banner tone="info">Estimate only, assuming no payments. Days are counted including the loan date, and interest compounds once a year.</Banner>
+              <Banner tone="info">Estimate only — assumes no interim payments. Days are counted from and including the loan date. Interest compounds once a year on the loan anniversary.</Banner>
             </div>
           ) : (
             <p className="muted">Enter the loan amount to see the estimate.</p>

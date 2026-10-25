@@ -150,6 +150,7 @@ def _totals_view(row: dict) -> dict:
     return {
         "disbursed": serialize.money(money(row["new_principal"]) + money(row["top_ups"])),
         "new_loans": int(row["new_loans"]),
+        "new_customers": int(row.get("new_customers") or 0),
         "interest_collected": serialize.money(row["interest_collected"]),
         "principal_collected": serialize.money(row["principal_collected"]),
         "total_collected": serialize.money(row["total_collected"]),
@@ -172,6 +173,15 @@ async def performance(repos, actor: Actor, branch: str | None, start: str | None
 
 
 def _detail_row(metric: str, row: dict) -> dict:
+    if metric == "new_customers":
+        return {
+            "customer_id": row["customerid"],
+            "customer_number": row.get("user_id"),
+            "customer_name": row.get("customername"),
+            "phone": row.get("phone"),
+            "branch": row.get("branch_prefix"),
+            "date": serialize.day(row.get("created_at")),
+        }
     base = {
         "loan_number": row["loan_number"],
         "customer_name": row.get("customername"),

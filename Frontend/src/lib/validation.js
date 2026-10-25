@@ -8,7 +8,7 @@ export const PASSWORD_MIN = 10;
 export function phoneError(value) {
   const digits = String(value ?? "").replace(/[\s-]/g, "").replace(/^\+91/, "");
   if (!digits) return "Enter the mobile number.";
-  return PHONE_PATTERN.test(digits) ? "" : "Enter a 10-digit mobile number starting with 6, 7, 8 or 9.";
+  return PHONE_PATTERN.test(digits) ? "" : "Enter a 10-digit mobile number.";
 }
 
 export function nameError(value) {

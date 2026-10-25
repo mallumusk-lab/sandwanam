@@ -174,7 +174,7 @@ function AddEntryCard({ day, categories, suggestions, onSaved }) {
         </div>
         <TextField label="Description" optional={!isOther} value={form.description} maxLength={255} list={listId}
           onChange={set("description")} error={errors.description} readOnly={uncertain} autoComplete="off"
-          hint={isOther ? "Required for Other: say what the cash was for." : "For example, who was paid or what for."} />
+          hint={isOther ? "Required when 'Other' is selected: describe what the cash was for." : "For example, who was paid or what for."} />
         <datalist id={listId}>
           {suggestions.map((text) => <option key={text} value={text} />)}
         </datalist>

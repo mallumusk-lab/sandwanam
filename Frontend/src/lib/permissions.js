@@ -12,7 +12,7 @@ export const FEATURES = {
 };
 
 /** Shown wherever head office looks at every branch at once (branch value ""). */
-export const ALL_BRANCHES_LABEL = "Admin – All Branches";
+export const ALL_BRANCHES_LABEL = "Admin – all branches";
 
 /**
  * `permission` may be a list: all of them are required. Head office staff have every

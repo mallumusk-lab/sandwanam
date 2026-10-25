@@ -42,7 +42,7 @@ export default function CustomerListPage() {
     {
       key: "open_loans",
       header: "Loans",
-      render: (c) => (c.open_loans ? <Pill tone="success">{c.open_loans} open</Pill> : <Pill>None open</Pill>),
+      render: (c) => (c.open_loans ? <Pill tone="success">{c.open_loans} open</Pill> : <Pill>No open loans</Pill>),
     },
   ];
 

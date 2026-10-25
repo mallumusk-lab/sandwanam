@@ -52,7 +52,7 @@ def phone(value: str) -> str:
     if digits.startswith("+91"):
         digits = digits[3:]
     if not PHONE.match(digits):
-        raise ValidationError("phone", "Enter a 10-digit mobile number starting with 6, 7, 8 or 9.")
+        raise ValidationError("phone", "Enter a 10-digit mobile number.")
     return digits
 
 
@@ -100,7 +100,7 @@ def tenure(value: object) -> int:
 
 def username(value: str) -> str:
     if not USERNAME.match(value or ""):
-        raise ValidationError("username", "Usernames are 3–32 letters, digits, dots, dashes or underscores.")
+        raise ValidationError("username", "Usernames must be 3–32 letters, digits, dots, hyphens, or underscores.")
     return value
 
 

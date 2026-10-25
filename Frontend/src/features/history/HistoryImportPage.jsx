@@ -18,7 +18,7 @@ import {
 import { Banner, Card, PageHeader, Stepper } from "../../ui/surfaces.jsx";
 import { ItemsEditor } from "../loans/ItemsEditor.jsx";
 
-const STEPS = ["Customer", "Loan and past entries", "Review and import"];
+const STEPS = ["Customer", "Loan & past entries", "Review & import"];
 const emptyEntry = () => ({ key: newRequestId(), date: "", kind: "addColl", amount: "", writeOff: false });
 // A past settlement: the server replays it as a live close (7-day minimum, write-off only when confirmed).
 const CLOSE = "close";
@@ -69,7 +69,7 @@ export function CustomerStep({ state, setState, onNext }) {
         .catch((err) => {
           if (controller.signal.aborted) return;
           setResults([]);
-          setSearchError(err.status === 403 ? "Your branch can't search customers. Choose \"New customer\" or ask a SuperAdmin." : err.message);
+          setSearchError(err.status === 403 ? "Your branch can't search the customer directory. Choose \"New customer\" or ask a SuperAdmin." : err.message);
         });
     }, 300);
     return () => { clearTimeout(timer); controller.abort(); };
@@ -80,11 +80,11 @@ export function CustomerStep({ state, setState, onNext }) {
   const next = (event) => {
     event.preventDefault();
     if (state.mode === "existing") {
-      if (!state.customer) return setErrors({ customer: "Search for the customer and choose them from the list." });
+      if (!state.customer) return setErrors({ customer: "Search for the customer and select them from the list." });
     } else {
       const c = state.newCustomer;
       const found = { name: nameError(c.name), phone: phoneError(c.phone), address: addressError(c.address),
-        branch: user.is_head_office && !c.branch ? "Choose the branch." : "" };
+        branch: user.is_head_office && !c.branch ? "Choose a branch." : "" };
       setErrors(found);
       if (Object.values(found).some(Boolean)) return requestAnimationFrame(() => focusFirstError(event.target));
     }
@@ -248,7 +248,7 @@ export function LoanStep({ state, setState, onBack, onNext }) {
       <fieldset className="stack">
         <legend>Past entries</legend>
         <p className="field-hint">
-          Payments and principal additions made before this system, oldest first or in any order. If the loan was settled, add the closing as the last entry.
+          Payments and principal additions made before this system was set up. Enter them oldest-first, or in any order. If the loan was settled, add the closing as the last entry.
         </p>
         {state.entries.map((entry, index) => {
           const closing = entry.kind === CLOSE;
@@ -269,7 +269,7 @@ export function LoanStep({ state, setState, onBack, onNext }) {
                 <div className="field">
                   <span className="field-label">Compounded interest</span>
                   <div className="field-calculated-note">
-                    Calculated on preview from loan values
+                    Calculated on preview automatically from the loan details
                   </div>
                 </div>
               ) : (
@@ -434,7 +434,7 @@ export default function HistoryImportPage() {
         {step === 2 && state.preview ? <ReviewStep state={state} setState={setState} onBack={() => setStep(1)} onDone={setDone} /> : null}
         {step === 2 && !state.preview ? <ErrorState error={{ message: "Preview the loan first." }} onRetry={() => setStep(1)} /> : null}
       </Card>
-      <p className="field-hint">Need the customer's details? <Link to="/customers">Search the directory</Link>.</p>
+      <p className="field-hint">Need the customer's details? <Link to="/customers">Search the customer directory</Link>.</p>
     </div>
   );
 }

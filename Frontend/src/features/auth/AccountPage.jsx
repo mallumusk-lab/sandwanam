@@ -53,7 +53,7 @@ export default function AccountPage() {
     <form className="stack" onSubmit={submit} noValidate>
       {forced ? (
         <Banner tone="warning" title="Choose a new password to continue">
-          <p>Your account has a temporary password. Pick one only you know.</p>
+          <p>Your account has a temporary password. Choose a new password that only you know.</p>
         </Banner>
       ) : null}
       <input type="text" name="username" autoComplete="username" value={user.username} readOnly hidden />

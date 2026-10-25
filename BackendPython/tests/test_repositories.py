@@ -160,7 +160,7 @@ class EveryRepositoryMethod(unittest.TestCase):
         r = self.repos
         lower, upper = utc(2025, 3, 1), utc(2025, 3, 2)
         run(r.reports.period_totals(None, lower, upper))
-        for metric in ("disbursed", "new_loans", "interest_collected", "principal_collected", "total_collected",
+        for metric in ("disbursed", "new_loans", "new_customers", "interest_collected", "principal_collected", "total_collected",
                        "compounded", "written_off", "closures", "gold_pledged", "gold_released"):
             with self.subTest(metric):
                 run(r.reports.details(metric, "SAN", lower, upper, 10))
