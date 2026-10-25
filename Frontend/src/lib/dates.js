@@ -45,13 +45,13 @@ export function daysBetween(from, to) {
 
 export function formatDay(day) {
   const date = toUTCDate(day);
-  return date ? DATE_FORMAT.format(date) : "—";
+  return date ? DATE_FORMAT.format(date).replace(/\bSept\b/g, "Sep") : "—";
 }
 
 export function formatDateTime(iso) {
   if (!iso) return "—";
   const date = new Date(iso);
-  return Number.isNaN(date.getTime()) ? "—" : DATE_TIME_FORMAT.format(date);
+  return Number.isNaN(date.getTime()) ? "—" : DATE_TIME_FORMAT.format(date).replace(/\bSept\b/g, "Sep");
 }
 
 /** Named reporting periods. The Indian financial year runs April–March. */

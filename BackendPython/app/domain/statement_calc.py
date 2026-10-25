@@ -20,7 +20,7 @@ from .money import ZERO, money
 METHODS = (
     "opening", "first_week", "first_week_settlement", "inclusive", "compounding", "writeoff", "legacy", "as_recorded",
 )
-LEGACY_NOTE = "Earlier system — not recalculated"
+LEGACY_NOTE = "Earlier System — Not Recalculated"
 AS_RECORDED_NOTE = "Shown as recorded; these figures could not be worked out again from the stored entries."
 
 

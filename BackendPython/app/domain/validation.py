@@ -88,7 +88,7 @@ def rate(value: object) -> Decimal:
         raise ValidationError("interest", "The interest rate can have at most 2 decimal places.")
     result = raw.quantize(Decimal("0.01"))
     if result <= 0 or result > MAX_RATE:
-        raise ValidationError("interest", "The interest rate must be between 0.01 and 100 % p.a.")
+        raise ValidationError("interest", "The interest rate must be between 0.01 and 100% p.a.")
     return result
 
 
