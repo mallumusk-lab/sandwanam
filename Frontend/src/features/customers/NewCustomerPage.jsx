@@ -34,7 +34,7 @@ export default function NewCustomerPage() {
       name: nameError(form.name),
       phone: phoneError(form.phone),
       address: addressError(form.address),
-      branch: user.is_head_office && !form.branch ? "Choose the branch." : "",
+      branch: user.is_head_office && !form.branch ? "Choose a branch." : "",
     };
     setErrors(found);
     setDuplicate(null);
@@ -78,7 +78,7 @@ export default function NewCustomerPage() {
           ) : null}
           <TextField label="Full name" autoComplete="off" value={form.name} onChange={set("name")} error={errors.name} maxLength={100} />
           <TextField label="Mobile number" type="tel" inputMode="numeric" autoComplete="off" value={form.phone}
-            onChange={set("phone")} error={errors.phone} hint="10 digits, without +91." maxLength={14} />
+            onChange={set("phone")} error={errors.phone} hint="10 digits, without the +91 country code." maxLength={14} />
           <TextareaField label="Address" value={form.address} onChange={set("address")} error={errors.address} maxLength={255} rows={3} />
           {user.is_head_office ? (
             <SelectField label="Branch" value={form.branch} onChange={set("branch")} error={errors.branch}

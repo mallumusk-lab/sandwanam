@@ -87,7 +87,7 @@ export default function NewLoanPage() {
       <form className="stack stack-lg" onSubmit={submit} noValidate>
         {uncertain ? (
           <Banner tone="warning" title="The connection dropped before the server replied" role="alert">
-            <p>The loan may already be created. Press "Create loan" again: it is safe, and the loan is never created twice.</p>
+            <p>The loan may already be created. Press "Create loan" again — it's safe, and the loan will never be created twice.</p>
           </Banner>
         ) : null}
         <fieldset className="stack stack-lg" disabled={uncertain}>

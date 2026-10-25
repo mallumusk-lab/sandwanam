@@ -95,7 +95,7 @@ export function CloseDayDialog({ day, onClose, onSaved, onChanged }) {
       onClose();
     } catch (err) {
       if (err.code === "cash_changed") {
-        setNotice("The cash expected in the drawer changed since this window opened (an entry was added or voided). Check the new figure and confirm again.");
+        setNotice("The expected cash in the drawer has changed since this dialog was opened (an entry was added or voided). Review the updated figure and confirm again.");
         await onChanged();
       } else if (err.status === 0) {
         setNotice(CONNECTION_LOST);
@@ -160,7 +160,7 @@ export function ReopenDayDialog({ day, onClose, onSaved }) {
   return (
     <ConfirmDialog open title="Reopen today's cash day?" confirmLabel="Reopen the day" busy={pending} onConfirm={confirm} onCancel={onClose}>
       <div className="stack">
-        <p>The counted closing figure is cleared and staff can record entries again. Close it again when done; a day left open is closed automatically overnight.</p>
+        <p>The closing count is cleared and staff can record entries again. Close the day again when done — a day left open is closed automatically overnight.</p>
         {error ? <Banner tone="danger">{error}</Banner> : null}
       </div>
     </ConfirmDialog>

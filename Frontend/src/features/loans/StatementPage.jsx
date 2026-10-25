@@ -58,12 +58,12 @@ export function LoanDetailsCard({ loan, statements }) {
             <Icon name="user" />
           </div>
           <div>
-            <div className="statement-badge-label">Borrower Name</div>
+            <div className="statement-badge-label">Customer name</div>
             <h2 className="statement-badge-val">{loan.customer_name || "—"}</h2>
           </div>
         </div>
         <div className="statement-loan-id-stack">
-          <div className="statement-badge-label"># Loan ID</div>
+          <div className="statement-badge-label">Loan no.</div>
           <div className="cluster cluster-sm">
             <span className="statement-badge-val">{loan.loan_number}</span>
             <LoanStatus status={loan.status} />
@@ -159,7 +159,7 @@ export function LedgerCard({ loan, statements, initiallyShown = false }) {
 export default function StatementPage() {
   const { loanNumber } = useParams();
   const { data, error, reload } = useAsync((signal) => loans.get(loanNumber, { signal }), [loanNumber]);
-  useDocumentTitle(`Statement ${loanNumber}`);
+  useDocumentTitle(`Loan statement – ${loanNumber}`);
 
   if (error) return <div className="page narrow"><ErrorState error={error} onRetry={error.status === 404 ? undefined : reload} /></div>;
   if (!data) return <div className="page"><SkeletonRows rows={8} label="Loading statement" /></div>;
@@ -189,7 +189,7 @@ export default function StatementPage() {
           <div className="statement-title-bar">
             <div className="statement-title-left">
               <span className="statement-accent-bar" aria-hidden="true" />
-              <h2 className="statement-doc-heading">LOAN ACCOUNT STATEMENT</h2>
+              <h2 className="statement-doc-heading">Loan Account Statement</h2>
             </div>
             <div className="statement-title-date">
               Date: {formatSlashDate(todayIST())}

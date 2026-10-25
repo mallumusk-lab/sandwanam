@@ -27,7 +27,7 @@ function RestoreDialog({ source, onClose, onRestored }) {
   const [error, setError] = useState("");
   const [pending, setPending] = useState(false);
   const submit = async () => {
-    if (confirmation !== "RESTORE") return setError("Type RESTORE in capital letters to confirm.");
+    if (confirmation !== "RESTORE") return setError("Type RESTORE in capitals to confirm.");
     setPending(true);
     setError("");
     try {
@@ -42,7 +42,7 @@ function RestoreDialog({ source, onClose, onRestored }) {
   return (
     <Modal open onClose={onClose} busy={pending} title="Import backup"
       description={`File: ${source.label}`}
-      footer={<><Button onClick={onClose} disabled={pending}>Cancel</Button><Button variant="danger" loading={pending} onClick={submit}>Replace all data</Button></>}>
+      footer={<><Button onClick={onClose} disabled={pending}>Cancel</Button><Button variant="danger" loading={pending} onClick={submit}>Restore backup</Button></>}>
       <div className="stack">
         <Banner tone="danger" title="This replaces every customer, loan, ledger entry and cash ledger day">
           <p>{RESTORE_WARNING} Nothing is saved by the app before the import. Accounts, passwords and the backup email settings are not changed.</p>
@@ -295,7 +295,7 @@ export function EmailDetails({ settings, user, onSaved }) {
     <div className="stack">
       {settings.configured ? null : (
         <Banner tone="warning" title="Email isn't set up on the server yet">
-          <p>Ask whoever manages the hosting to add these settings:</p>
+          <p>Ask whoever manages your hosting to add these settings:</p>
           <ul>{settings.missing.map((name) => <li key={name}>{name}</li>)}</ul>
         </Banner>
       )}
@@ -344,7 +344,7 @@ export default function BackupPage() {
           </Card>
         ) : null}
         <Banner tone="info">
-          <p>Keep each emailed backup somewhere safe. The database provider's own backups (Supabase) stay the disaster-recovery layer, so keep them switched on.</p>
+          <p>Keep each emailed backup somewhere safe. The database provider's own backups (e.g. Supabase) remain the disaster-recovery layer — keep them enabled.</p>
         </Banner>
       </div>
     </div>

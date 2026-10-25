@@ -189,7 +189,7 @@ export default function ReportPage() {
             <Button icon="download" onClick={exportCsv} loading={exporting} disabled={!valid || !data?.total} className="no-print">Export CSV</Button>
             <Button icon="printer" onClick={printAll} loading={preparingPrint} className="no-print"
               disabled={!data?.total || data.total > PRINT_LIMIT}
-              title={data?.total > PRINT_LIMIT ? `Over ${PRINT_LIMIT} entries: use Export CSV` : undefined}>Print</Button>
+              title={data?.total > PRINT_LIMIT ? `More than ${PRINT_LIMIT} entries — use Export CSV instead` : undefined}>Print</Button>
           </>
         } />
       <Card>
@@ -226,7 +226,7 @@ export default function ReportPage() {
           ) : data ? (
             <div aria-busy={loading}>
               {data.total > PRINT_LIMIT ? (
-                <div className="no-print"><Banner tone="info">More than {PRINT_LIMIT} entries: use Export CSV to print or reconcile the whole period.</Banner></div>
+                <div className="no-print"><Banner tone="info">More than {PRINT_LIMIT} entries: export as CSV to print or reconcile the full period.</Banner></div>
               ) : null}
               <DataTable columns={columns} rows={printRows ?? data.items} rowKey={(r) => r.id} footer={footer}
                 caption={`${data.total.toLocaleString("en-IN")} entries, ${formatDay(data.from)} – ${formatDay(data.to)}`}

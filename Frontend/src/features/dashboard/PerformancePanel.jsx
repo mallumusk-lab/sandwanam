@@ -15,7 +15,18 @@ const PRESETS = [
   { value: "fy", label: "This financial year" },
   { value: "custom", label: "Custom" },
 ];
-const SHOWN = ["disbursed", "total_collected", "interest_collected", "principal_collected", "closures", "compounded", "written_off", "gold_pledged"];
+const SHOWN = [
+  "new_customers",
+  "new_loans",
+  "disbursed",
+  "total_collected",
+  "interest_collected",
+  "principal_collected",
+  "closures",
+  "compounded",
+  "written_off",
+  "gold_pledged",
+];
 
 export function KpiButton({ label, value, meta, onClick }) {
   return (

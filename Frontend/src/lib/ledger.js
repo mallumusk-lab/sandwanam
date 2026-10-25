@@ -19,7 +19,7 @@ export function entryLabel(kind) {
 export const CALCULATION_LABELS = {
   opening: "Loan opened",
   first_week: "First 7 Days: Payment goes to principal, no daily interest",
-  first_week_settlement: "7 Days' Interest on the Highest Principal, Then Daily",
+  first_week_settlement: "7 days' interest on the highest principal, then daily",
   inclusive: "Daily interest, both days counted",
   compounding: "Yearly compounding, exact days",
   writeoff: "Closed with a write-off",

@@ -27,7 +27,7 @@ const NAV = [
       { to: "/settings", label: "Gold rate", icon: "sliders", hq: true },
       { to: "/backup", label: "Backups", icon: "database", headOffice: true },
       { to: "/audit", label: "Audit log", icon: "activity", hq: true },
-      { to: "/admin/branches", label: "Branches & Users", icon: "shield", superadmin: true },
+      { to: "/admin/branches", label: "Branches", icon: "shield", superadmin: true },
     ],
   },
 ];
@@ -176,7 +176,7 @@ export function AppShell() {
             </span>
           </div>
           <NavLink to="/account" className="nav-link">
-            <Icon name="key" /> Password
+            <Icon name="key" /> Change password
           </NavLink>
           <button type="button" className="nav-link nav-button" onClick={signOut}>
             <Icon name="logOut" /> Sign out

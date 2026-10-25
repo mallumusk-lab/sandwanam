@@ -160,7 +160,7 @@ test("navigation: branch staff with the cash ledger see it under Branch operatio
 
 test("SuperAdmin navigation: customers, backups, branches and the all-branches picker", () => {
   const superNav = renderAt("/customers", <AppShell />, SUPERADMIN, "/customers");
-  assert.deepEqual(navLinks(superNav), ["Customers", "Backups", "Branches &amp; Users"]);
+  assert.deepEqual(navLinks(superNav), ["Customers", "Backups", "Branches"]);
   assert.match(superNav, /<p class="nav-heading">Branch operations<\/p>[\s\S]*<p class="nav-heading">Head office<\/p>/);
   for (const hidden of ["Dashboard", "Reports", "History import", "Loan calculator", "Gold rate", "Audit log", "New customer", "Application form", "Cash ledger"]) {
     assert.doesNotMatch(superNav, new RegExp(hidden), hidden);
