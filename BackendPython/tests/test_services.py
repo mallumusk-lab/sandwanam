@@ -467,6 +467,27 @@ class AdminTests(Fixture):
         earlier = run(receipts_service.for_statement(self.repos, self.san, paid["statement_id"], later))
         self.assertFalse(earlier["is_closing"], "older payments keep their own receipt title")
 
+    def test_receipt_number_starts_from_one_for_each_branch(self):
+        san_loan = self.loan(who=self.san, principal="50000")["loan_number"]
+        swa_cust = self.customer(who=self.swa, phone="9876543299", name="Rajesh Kumar")
+        swa_loan = self.loan(who=self.swa, customer_id=swa_cust["id"], principal="50000", request_id="swa-l1")["loan_number"]
+
+        san_p1 = run(loans_service.collect(self.repos, self.san, san_loan, amount="1000", expected_total=None, request_id="san-p1", now=NOW))
+        san_rec1 = run(receipts_service.for_statement(self.repos, self.san, san_p1["statement_id"], NOW))
+        self.assertEqual(san_rec1["entry"]["receipt_no"], 1)
+
+        swa_p1 = run(loans_service.collect(self.repos, self.swa, swa_loan, amount="1000", expected_total=None, request_id="swa-p1", now=NOW))
+        swa_rec1 = run(receipts_service.for_statement(self.repos, self.swa, swa_p1["statement_id"], NOW))
+        self.assertEqual(swa_rec1["entry"]["receipt_no"], 1)
+
+        san_p2 = run(loans_service.collect(self.repos, self.san, san_loan, amount="1000", expected_total=None, request_id="san-p2", now=NOW + timedelta(days=1)))
+        san_rec2 = run(receipts_service.for_statement(self.repos, self.san, san_p2["statement_id"], NOW + timedelta(days=1)))
+        self.assertEqual(san_rec2["entry"]["receipt_no"], 2)
+
+        swa_p2 = run(loans_service.collect(self.repos, self.swa, swa_loan, amount="1000", expected_total=None, request_id="swa-p2", now=NOW + timedelta(days=1)))
+        swa_rec2 = run(receipts_service.for_statement(self.repos, self.swa, swa_p2["statement_id"], NOW + timedelta(days=1)))
+        self.assertEqual(swa_rec2["entry"]["receipt_no"], 2)
+
 
 class FirstWeekServiceTests(Fixture):
     """The first-7-days rule through the services: the user's example, 100000 at 18% from 10 March."""

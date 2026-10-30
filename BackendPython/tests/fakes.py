@@ -23,6 +23,7 @@ class State:
         self.sessions: dict[bytes, dict] = {}
         self.throttle: dict[tuple[str, str], dict] = {}
         self.counters: dict[str, int] = {}
+        self.receipt_counters: dict[str, int] = {}
         self.customers: dict[int, dict] = {}
         self.loans: dict[str, dict] = {}
         self.statements: list[dict] = []
@@ -103,6 +104,7 @@ class Users(_Part):
 
     async def ensure_counter(self, prefix):
         self.s.counters.setdefault(prefix, 1)
+        self.s.receipt_counters.setdefault(prefix, 1)
 
 
 class Sessions(_Part):
@@ -286,13 +288,20 @@ class Statements(_Part):
     async def totals(self, loan_number):
         return _totals(self._for(loan_number))
 
+    async def next_receipt_number(self, branch):
+        if branch not in self.s.receipt_counters:
+            return None
+        number = self.s.receipt_counters[branch]
+        self.s.receipt_counters[branch] = number + 1
+        return number
+
     async def by_request_id(self, request_id):
         return next(({"statementid": s["statementid"], "loan_number": s["loan_number"]}
                      for s in self.s.statements if s.get("client_request_id") == request_id), None)
 
     async def insert(self, *, loan_id, loan_number, kind, at, amount_paid, current_principal, current_interest,
                      principal_balance, interest_balance, accrued_days, writeoff_principal, writeoff_interest,
-                     created_by, request_id):
+                     created_by, request_id, receipt_no=None):
         if request_id and any(s.get("client_request_id") == request_id for s in self.s.statements):
             raise AssertionError("duplicate client_request_id")
         sid = self.s.next_ids["statement"]
@@ -302,7 +311,7 @@ class Statements(_Part):
             amountpaid=amount_paid, currentprincipal=current_principal, currentinterest=current_interest,
             principlebalance=principal_balance, interestbalance=interest_balance, accrued_days=accrued_days,
             writeoff_principal=writeoff_principal, writeoff_interest=writeoff_interest, created_by=created_by,
-            client_request_id=request_id, created_at=at,
+            client_request_id=request_id, created_at=at, receipt_no=receipt_no,
         ))
         return sid
 

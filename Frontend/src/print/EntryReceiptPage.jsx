@@ -59,7 +59,7 @@ export function entrySheet(data, copy) {
       ["Loan date", formatDay(loan.date)],
       ["Interest rate", `${loan.rate} % p.a.`],
       entry.accrued_days !== null ? ["Interest days this period", entry.accrued_days] : null,
-      ["Receipt number", `R${entry.id}`],
+      ["Receipt number", `R${entry.receipt_no ?? entry.id}`],
       ...detail.rows,
     ].filter(Boolean),
     total: detail.total ? { label: detail.total[0], value: formatINR(detail.total[1]) } : null,
@@ -79,7 +79,7 @@ export default function EntryReceiptPage() {
         <ShareReceiptButton
           sheet={data ? entrySheet(data, "Customer") : null}
           styleSource={customerCopy}
-          fileName={data ? `Receipt-R${data.entry.id}-${data.loan.loan_number}.pdf` : ""}
+          fileName={data ? `Receipt-R${data.entry.receipt_no ?? data.entry.id}-${data.loan.loan_number}.pdf` : ""}
           title={data ? describe(data).title : "Receipt"}
           phone={data?.customer.phone}
         />

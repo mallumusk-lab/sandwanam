@@ -21,7 +21,13 @@ from app.domain import particulars, validation
 from app.security import passwords
 
 MIGRATIONS = ROOT / "migrations"
-MAIN_STEPS = ("001_baseline", "002_auth_integrity", "003_ledger_reporting", "005_cash_ledger")
+MAIN_STEPS = (
+    "001_baseline",
+    "002_auth_integrity",
+    "003_ledger_reporting",
+    "005_cash_ledger",
+    "006_branch_receipt_counters",
+)
 POST_CUTOVER = "004_post_cutover"
 
 

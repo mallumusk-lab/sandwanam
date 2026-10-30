@@ -177,6 +177,7 @@ def statement(row: dict, calc: Calculation | None = None, *, loan_start: date | 
                 principal_paid = fmt(Decimal(0))
     view = {
         "id": row["statementid"],
+        "receipt_no": row.get("receipt_no"),
         "loan_number": row.get("loan_number"),
         "kind": kind,
         "date": day(row.get("date")),

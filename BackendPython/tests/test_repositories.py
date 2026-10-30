@@ -131,7 +131,8 @@ class EveryRepositoryMethod(unittest.TestCase):
         run(r.statements.insert(loan_id=1, loan_number="SAN1L1", kind="addColl", at=NOW, amount_paid=D("1"),
                                 current_principal=D("0"), current_interest=D("1"), principal_balance=D("1"),
                                 interest_balance=D("0"), accrued_days=1, writeoff_principal=None,
-                                writeoff_interest=None, created_by="u", request_id="r"))
+                                writeoff_interest=None, created_by="u", request_id="r", receipt_no=1))
+        run(r.statements.next_receipt_number("SAN"))
         run(r.statements.for_loan("SAN1L1"))
         run(r.statements.get(1))
         run(r.statements.total_written_off("SAN"))
@@ -183,9 +184,9 @@ class EveryRepositoryMethod(unittest.TestCase):
         payload = backup_codec.encode(
             {"customers": [{"customerid": 1, "customername": EVIL, "branch_prefix": "SAN"}],
              "loan_data": [{"loanid": 1, "loan_number": "SAN1L1", "items": []}],
-             "statement": [{"statementid": 1, "loan_number": "SAN1L1"}],
+             "statement": [{"statementid": 1, "loan_number": "SAN1L1", "receipt_no": 1}],
              "branches": [{"username": "User1", "branch_prefix": "SAN"}],
-             "branch_counters": [{"branch_prefix": "SAN", "next_customer_no": 2}],
+             "branch_counters": [{"branch_prefix": "SAN", "next_customer_no": 2, "next_receipt_no": 1}],
              "app_settings": [{"key": "gold_rate", "value": {"per_gram": "1"}, "updated_at": NOW, "updated_by": "u"}]},
             NOW,
         )

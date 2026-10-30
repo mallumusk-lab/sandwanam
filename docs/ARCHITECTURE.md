@@ -161,10 +161,10 @@ Ledger entry kinds (`statement.transactiontype`):
 | `role` | accounts **and** branches (legacy name) | `username` PK, `password`, `account_type` (superadmin/hq/branch), `branch_prefix` UNIQUE, `permissions` (CSV), letterhead fields, `is_active`, `must_change_password` |
 | `customers` | customers | `customerid`, `user_id` (e.g. SAN12, unique), `phone` unique, `branch_prefix` → role, `last_loan_no` |
 | `loan_data` | loans | `loan_number` (e.g. SAN12L3) unique, `customerid`, `items` jsonb (truth), `particulars` (display), weights, `principle_amount`, `interest` (rate), `tenure`, `date`, `loantype` open/closed, `closed_at`, cached `refreshprincipleamount`/`refreshinterest` |
-| `statement` | ledger | `statementid`, `loan_number`, `transactiontype`, `date`, amounts and balances, `accrued_days`, `writeoff_*`, `client_request_id` UNIQUE (idempotency), `created_at` (NULL = legacy row) |
+| `statement` | ledger | `statementid`, `loan_number`, `transactiontype`, `date`, amounts and balances, `accrued_days`, `writeoff_*`, `client_request_id` UNIQUE (idempotency), `created_at` (NULL = legacy row), `receipt_no` (branch receipt sequence) |
 | `sessions` | sign-in sessions | `token_hash` (SHA-256), `username`, `expires_at`, `last_seen_at` |
 | `login_throttle` | sign-in throttling | (`username`, `ip`) where ip is an address, `*` (account), `trusted:<address>`, or `password-change` |
-| `branch_counters` | next customer number per branch | `branch_prefix`, `next_customer_no` |
+| `branch_counters` | next customer and receipt numbers per branch | `branch_prefix`, `next_customer_no`, `next_receipt_no` |
 | `app_settings` | settings | `gold_rate` → `{"per_gram": "…"}`; local keys `backup_email` → `{"recipient", "enabled"}` and `backup_email_status` → `{"nightly", "manual"}` (an older `"test"` half is ignored and dropped), never exported or restored |
 | `audit_logs` | who did what | `username`, `action`, `entity_id`, `details`, `ip`, `request_id` |
 | ~~`backup_snapshots`~~ | removed by `005_cash_ledger.sql` (`DROP TABLE IF EXISTS`): backups are emailed, never stored | — |

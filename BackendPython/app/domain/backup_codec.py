@@ -49,7 +49,7 @@ TABLES: dict[str, tuple[tuple[str, str], ...]] = {
         ("email", "text"), ("logo", "text"), ("permissions", "text"), ("branch_prefix", "text"),
         ("account_type", "text"),
     ),
-    "branch_counters": (("branch_prefix", "text"), ("next_customer_no", "int")),
+    "branch_counters": (("branch_prefix", "text"), ("next_customer_no", "int"), ("next_receipt_no", "int")),
     "customers": (
         ("customerid", "int"), ("customername", "text"), ("phone", "text"), ("address", "text"),
         ("loanstatus", "text"), ("role", "text"), ("user_id", "text"), ("branch_prefix", "text"),
@@ -70,6 +70,7 @@ TABLES: dict[str, tuple[tuple[str, str], ...]] = {
         ("principlebalance", "decimal"), ("interestbalance", "decimal"), ("transactiontype", "text"),
         ("accrued_days", "int"), ("writeoff_principal", "decimal"), ("writeoff_interest", "decimal"),
         ("client_request_id", "text"), ("created_by", "text"), ("created_at", "timestamptz"),
+        ("receipt_no", "int"),
     ),
     "app_settings": (("key", "text"), ("value", "json"), ("updated_at", "timestamptz"), ("updated_by", "text")),
     # Branch cash ledger (migration 005), independent of loans.

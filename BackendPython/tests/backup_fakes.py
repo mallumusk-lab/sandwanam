@@ -23,7 +23,7 @@ class Backups:
         branches = [dict(u) for u in s.users.values() if u["account_type"] != "superadmin"]
         return {
             "branches": sorted(branches, key=lambda u: u["username"]),
-            "branch_counters": [{"branch_prefix": p, "next_customer_no": n} for p, n in sorted(s.counters.items())],
+            "branch_counters": [{"branch_prefix": p, "next_customer_no": n, "next_receipt_no": s.receipt_counters.get(p, 1)} for p, n in sorted(s.counters.items())],
             "customers": [dict(c) for _, c in sorted(s.customers.items())],
             "loan_data": sorted((dict(l) for l in s.loans.values()), key=lambda l: l["loanid"]),
             "statement": sorted((dict(e) for e in s.statements), key=lambda e: e["statementid"]),
@@ -57,6 +57,8 @@ class Backups:
                 user.update({k: branch[k] for k in ("display_name", "address", "phone", "email", "logo")})
         for counter in rows["branch_counters"]:
             s.counters[counter["branch_prefix"]] = counter["next_customer_no"]
+            if "next_receipt_no" in counter:
+                s.receipt_counters[counter["branch_prefix"]] = counter["next_receipt_no"]
         for setting in rows["app_settings"]:
             s.settings[setting["key"]] = {"value": json.loads(setting["value"]), "updated_at": setting["updated_at"],
                                           "updated_by": setting["updated_by"]}

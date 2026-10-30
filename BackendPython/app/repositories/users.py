@@ -110,7 +110,7 @@ class UsersRepo:
 
     async def ensure_counter(self, prefix: str) -> None:
         await self.db.execute(
-            "INSERT INTO branch_counters (branch_prefix, next_customer_no) VALUES ($1, 1) ON CONFLICT DO NOTHING",
+            "INSERT INTO branch_counters (branch_prefix, next_customer_no, next_receipt_no) VALUES ($1, 1, 1) ON CONFLICT DO NOTHING",
             prefix,
         )
 

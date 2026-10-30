@@ -170,7 +170,7 @@ class Check(BackupFixture):
 
     def test_a_branch_counter_for_a_missing_branch_is_refused_before_anything_changes(self):
         rows = run(self.repos.backups.export_rows())
-        rows["branch_counters"].append({"branch_prefix": "ZZZ", "next_customer_no": 1})  # a branch deleted since
+        rows["branch_counters"].append({"branch_prefix": "ZZZ", "next_customer_no": 1, "next_receipt_no": 1})  # a branch deleted since
         document = backup_codec.encode(rows, NOW)
         report = run(backup_service.check(self.repos, self.hq, document=document))
         self.assertEqual(report["branch_prefixes"], ["SAN"], "a counter alone does not list the branch")
