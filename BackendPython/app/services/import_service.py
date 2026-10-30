@@ -232,7 +232,30 @@ async def commit(
             principal=validated.principal, rate=validated.rate, tenure=validated.tenure,
             branch=customer["branch_prefix"], loan_date=at_values[0], created_by=actor.username,
         )
+        branch = customer["branch_prefix"]
         for index, (entry, at) in enumerate(zip(simulated, at_values)):
+            receipt_no = None
+            if entry.kind in (ledger.COLLECTION, "disbursement", "modify"):
+                for _ in range(25):
+                    receipt_no = await repos.statements.next_receipt_number(branch)
+                    if receipt_no is None:
+                        await repos.users.ensure_counter(branch)
+                        continue
+                    break
+            elif entry.kind == ledger.WRITE_OFF:
+                previous = simulated[index - 1] if index > 0 else None
+                paired = (
+                    previous is not None
+                    and previous.kind == ledger.COLLECTION
+                    and dates.as_aware(at) - dates.as_aware(at_values[index - 1]) <= CLOSING_PAIR_GAP
+                )
+                if not paired:
+                    for _ in range(25):
+                        receipt_no = await repos.statements.next_receipt_number(branch)
+                        if receipt_no is None:
+                            await repos.users.ensure_counter(branch)
+                            continue
+                        break
             await repos.statements.insert(
                 loan_id=row["loanid"], loan_number=loan_number, kind=entry.kind, at=at,
                 amount_paid=entry.amount_paid, current_principal=entry.current_principal,
@@ -240,6 +263,7 @@ async def commit(
                 interest_balance=entry.interest_balance, accrued_days=entry.accrued_days,
                 writeoff_principal=entry.writeoff_principal, writeoff_interest=entry.writeoff_interest,
                 created_by=actor.username, request_id=request_id if index == 0 else None,
+                receipt_no=receipt_no,
             )
         await repos.loans.update_cache(loan_number, final.principal_balance, final.interest_balance)
         if closing is not None:  # as loans_service.close: closed at the closing entry's stamp

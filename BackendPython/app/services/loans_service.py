@@ -194,6 +194,17 @@ async def _post(
     at_values = stamps_for(entries, latest["date"] if latest else loan["date"], now)
     primary_index = len(q.compoundings)
     primary_id: int | None = None
+    receipt_no: int | None = None
+    user_entries = entries[primary_index:]
+    if any(e.kind in (ledger.COLLECTION, "disbursement", "modify", ledger.WRITE_OFF) for e in user_entries):
+        branch = loan.get("branch_prefix")
+        if branch:
+            for _ in range(25):
+                receipt_no = await repos.statements.next_receipt_number(branch)
+                if receipt_no is None:
+                    await repos.users.ensure_counter(branch)
+                    continue
+                break
     for index, (entry, at) in enumerate(zip(entries, at_values)):
         statement_id = await repos.statements.insert(
                 loan_id=loan["loanid"],
@@ -210,6 +221,7 @@ async def _post(
                 writeoff_interest=entry.writeoff_interest,
                 created_by=actor.username,
                 request_id=request_id if index == primary_index else None,
+                receipt_no=receipt_no if index == primary_index else None,
             )
         if index == primary_index:
             primary_id = statement_id

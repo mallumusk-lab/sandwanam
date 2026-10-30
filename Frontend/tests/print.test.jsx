@@ -99,6 +99,13 @@ test("a first-week payment receipt says the payment went to principal", () => {
   assert.equal(topUp.fields.some(([label]) => label === "First 7 days"), false);
 });
 
+test("entry receipt uses branch receipt_no when present and falls back to entry id", () => {
+  const withBranchReceipt = entrySheet(entryReceipt({ receipt_no: 1 }), "Customer");
+  assert.deepEqual(withBranchReceipt.fields.find(([label]) => label === "Receipt number"), ["Receipt number", "R1"]);
+  const legacyReceipt = entrySheet(entryReceipt({ receipt_no: null, id: 42 }), "Customer");
+  assert.deepEqual(legacyReceipt.fields.find(([label]) => label === "Receipt number"), ["Receipt number", "R42"]);
+});
+
 test("share links carry a short message only, and WhatsApp only for a valid mobile number", () => {
   assert.equal(whatsappLink("9876543210"), "https://wa.me/919876543210?text=Your%20receipt%20is%20attached%20as%20a%20PDF.");
   assert.equal(whatsappLink("+91 98765-43210"), "https://wa.me/919876543210?text=Your%20receipt%20is%20attached%20as%20a%20PDF.");

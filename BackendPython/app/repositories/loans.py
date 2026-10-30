@@ -154,13 +154,23 @@ class LoansRepo:
 
 STATEMENT_FIELDS = (
     "statementid, loanid, loan_number, transactiontype, date, amountpaid, currentprincipal, currentinterest, "
-    "principlebalance, interestbalance, accrued_days, writeoff_principal, writeoff_interest, created_by, created_at"
+    "principlebalance, interestbalance, accrued_days, writeoff_principal, writeoff_interest, created_by, created_at, receipt_no"
 )
 
 
 class StatementsRepo:
     def __init__(self, db: Db):
         self.db = db
+
+    async def next_receipt_number(self, branch: str) -> int | None:
+        return await self.db.fetchval(
+            """
+            UPDATE branch_counters SET next_receipt_no = next_receipt_no + 1
+            WHERE branch_prefix = $1
+            RETURNING next_receipt_no - 1
+            """,
+            branch,
+        )
 
     async def latest(self, loan_number: str) -> dict | None:
         return await self.db.fetchrow(
@@ -196,17 +206,18 @@ class StatementsRepo:
         writeoff_interest: Decimal | None,
         created_by: str,
         request_id: str | None,
+        receipt_no: int | None = None,
     ) -> int:
         return await self.db.fetchval(
             """
             INSERT INTO statement (loanid, loan_number, transactiontype, date, amountpaid, currentprincipal,
                                    currentinterest, principlebalance, interestbalance, accrued_days,
-                                   writeoff_principal, writeoff_interest, created_by, client_request_id, created_at)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, NOW())
+                                   writeoff_principal, writeoff_interest, created_by, client_request_id, created_at, receipt_no)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, NOW(), $15)
             RETURNING statementid
             """,
             loan_id, loan_number, kind, at, amount_paid, current_principal, current_interest, principal_balance,
-            interest_balance, accrued_days, writeoff_principal, writeoff_interest, created_by, request_id,
+            interest_balance, accrued_days, writeoff_principal, writeoff_interest, created_by, request_id, receipt_no,
         )
 
     async def for_loan(self, loan_number: str) -> list[dict]:

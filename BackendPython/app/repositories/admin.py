@@ -157,8 +157,8 @@ class BackupsRepo:
             )
         await self.db.executemany(
             """
-            INSERT INTO branch_counters (branch_prefix, next_customer_no) VALUES ($1, $2)
-            ON CONFLICT (branch_prefix) DO UPDATE SET next_customer_no = EXCLUDED.next_customer_no
+            INSERT INTO branch_counters (branch_prefix, next_customer_no, next_receipt_no) VALUES ($1, $2, $3)
+            ON CONFLICT (branch_prefix) DO UPDATE SET next_customer_no = EXCLUDED.next_customer_no, next_receipt_no = EXCLUDED.next_receipt_no
             """,
             tables.get("branch_counters", []),
         )

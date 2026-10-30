@@ -439,6 +439,7 @@ the stored loan, today's closing quote and the customer's loan status must be id
 - `test_only_superadmin_manages_branches`: only the SuperAdmin creates and changes branches and accounts.
 - `test_branch_with_customers_cannot_be_deleted`: a branch that has customers cannot be deleted.
 - `test_receipts_come_from_the_ledger`: receipts show the stored ledger figures and another branch gets 404.
+- `test_receipt_number_starts_from_one_for_each_branch`: each branch has its own receipt serial starting from 1.
 - `test_restore_requires_superadmin_and_confirmation`: restore needs the SuperAdmin and the typed word RESTORE.
 
 #### `ReviewFixes`
@@ -563,6 +564,7 @@ the stored loan, today's closing quote and the customer's loan status must be id
 - `receipt toolbars put Share beside Print, disabled until the receipt loads`: Share sits next to Print and waits for the data.
 - `the loan voucher sheet shows the loan, the terms in Malayalam and the signatures`: the loan voucher keeps its content.
 - `a first-week payment receipt says the payment went to principal`: day 1–7 payment receipts say the payment went to principal.
+- `entry receipt uses branch receipt_no when present and falls back to entry id`: receipts display branch receipt numbers starting from 1 with fallback.
 - `share links carry a short message only, and WhatsApp only for a valid mobile number`: no receipt data goes into share URLs.
 - `Backups: SuperAdmin sees the backup email card and Import backup, with nothing stored or downloaded`: the SuperAdmin's Backups page has "Backup email" then "Import backup" (ZIP, .json or .json.gz) and no snapshot list, "Save a snapshot now" or download button.
 - `Backups: head office can check a file but not import it`: head office gets Import backup to check a file, told only the SuperAdmin can import.
